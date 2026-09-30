@@ -1,0 +1,56 @@
+<script>
+(function () {
+  var E = App.esc, LAST = null;
+  var REPORTS = [['companyKyc', 'Company KYC Report', 'Company details, engagements, UBOs, ownership, documents, risk, KYC review and approval history.'], ['docExpiry', 'Document Expiry Report', 'Expired documents and documents expiring within the chosen number of days.'],
+    ['highRisk', 'High-Risk Company Report', 'All companies with a final High risk rating.'], ['pendingReview', 'Pending Review Report', 'KYC reviews awaiting MLRO / DMLRO review.'], ['kycCompletion', 'KYC Completion Report', 'Review status summary and detail, with overdue reviews flagged.']];
+
+  App.pages.reports = function (view) {
+    return App.api('companyList', { pageSize: 100 }).then(function (d) {
+      view.innerHTML = '<div class="page-head"><h1>Reports</h1></div><div class="grid g3">' + REPORTS.map(function (r) {
+        var extra = r[0] === 'companyKyc' ? '<select id="rp_co" style="width:100%;margin:8px 0"><option value="">Select company...</option>' + d.rows.map(function (c) { return '<option value="' + E(c.CompanyID) + '">' + E(c.LegalName) + '</option>'; }).join('') + '</select>' :
+          r[0] === 'docExpiry' ? '<label class="muted">Within days <input id="rp_days" type="number" min="0" value="90" style="width:90px"></label><br><br>' : '<br>';
+        return '<div class="card"><h2>' + E(r[1]) + '</h2><p class="muted">' + E(r[2]) + '</p>' + extra + '<button class="primary" data-act="rp-run" data-type="' + r[0] + '">Generate</button></div>';
+      }).join('') + '</div><div id="rpout"></div>';
+    });
+  };
+  function params(type) {
+    var p = { type: type };
+    if (type === 'companyKyc') { p.companyId = App.$('rp_co').value; if (!p.companyId) throw { message: 'Select a company.' }; }
+    if (type === 'docExpiry') p.days = App.$('rp_days').value;
+    return p;
+  }
+  App.acts['rp-run'] = function (el) {
+    var p; try { p = params(el.dataset.type); } catch (e) { return App.fail(e); }
+    App.busy(el, App.api('reportRun', p)).then(function (rep) {
+      LAST = { rep: rep, p: p };
+      App.$('rpout').innerHTML = '<div class="card"><div class="row"><h2 style="margin:0">' + E(rep.title) + '</h2><span style="flex:1"></span><button data-act="rp-pdf">Export PDF</button><button data-act="rp-csv">Export Excel (CSV)</button></div><p class="muted">Generated ' + E(App.fmtTs(rep.generatedAt)) + ' by ' + E(rep.generatedBy) + '. Confidential.</p>' +
+        rep.sections.map(function (s) { return '<h3 style="margin-top:16px">' + E(s.title) + '</h3>' + App.tbl(s.columns.map(function (c, i) { return { h: c, f: function (r) { return E(r[i]); } }; }), s.rows, { empty: 'No records.' }); }).join('') + '</div>';
+      App.$('rpout').scrollIntoView({ behavior: 'smooth' });
+    }, App.fail);
+  };
+  App.acts['rp-pdf'] = function (el) { App.busy(el, App.api('reportPdf', LAST.p)).then(function (f) { App.saveFile(f.name, f.mimeType, f.base64); }, App.fail); };
+  App.acts['rp-csv'] = function () { App.saveCsv(LAST.rep.title.replace(/[^\w]+/g, '_') + '.csv', LAST.rep.sections); };
+
+  // ---------------------------------------------------------------- audit log page
+  var AF = {};
+  App.pages.audit = function (view) {
+    AF = {};
+    view.innerHTML = '<div class="page-head"><h1>Audit Log</h1><span class="sp"></span><button data-act="au-verify">Verify integrity</button></div><div class="card"><div class="filters"><label>Search<input id="au_q" type="search" data-enter="auApply" style="width:200px"></label><label>User<input id="au_u" data-enter="auApply" style="width:180px"></label>' +
+      '<label>Action<select id="au_a"><option value=""></option></select></label><label>From<input id="au_f" type="date"></label><label>To<input id="au_t" type="date"></label><button class="primary" data-act="auApply">Apply</button></div><div id="aul"></div>' +
+      '<p class="muted">The audit log is append-only and hash-chained: entries cannot be edited or deleted through the application, and any manual change to the sheet is detected by "Verify integrity". Client IP is not available in Google Apps Script.</p></div>';
+    return auLoad(true);
+  };
+  function auLoad(first) {
+    return App.api('auditList', Object.assign({ limit: 200 }, AF)).then(function (d) {
+      if (first) { var sel = App.$('au_a'); d.actions.forEach(function (a) { var o = document.createElement('option'); o.textContent = a; sel.appendChild(o); }); }
+      App.$('aul').innerHTML = '<div class="muted">' + d.total + ' matching entries (searching the most recent 5,000)</div>' + App.tbl([{ h: 'Log ID', f: function (r) { return '<span class="mono">' + E(r.LogID) + '</span>'; } }, { h: 'Timestamp', f: function (r) { return E(App.fmtTs(r.Timestamp)); } }, { h: 'User', f: function (r) { return E(r.UserEmail) + '<div class="muted">' + E(r.UserRole) + '</div>'; } },
+        { h: 'Action', f: function (r) { return '<b>' + E(r.Action) + '</b>'; } }, { h: 'Company', f: function (r) { return r.CompanyID ? '<a data-act="open-company" data-id="' + E(r.CompanyID) + '">' + E(r.CompanyID) + '</a>' : ''; } }, { h: 'Record', f: function (r) { return '<span class="mono">' + E(r.RecordType + ' ' + r.RecordID) + '</span>'; } },
+        { h: 'Old / New', f: function (r) { return (r.OldValue ? '<div class="muted">' + E(r.OldValue.substr(0, 160)) + '</div>' : '') + (r.NewValue ? '<div>' + E(r.NewValue.substr(0, 160)) + '</div>' : ''); } }, { h: 'Comments', f: function (r) { return E(r.Comments); } }], d.rows);
+    }, function (e) { App.$('aul').innerHTML = '<div class="alert bad">' + E(e.message) + '</div>'; });
+  }
+  App.acts.auApply = App.changes.auApply = function () { AF = { q: App.$('au_q').value, user: App.$('au_u').value, action: App.$('au_a').value, from: App.$('au_f').value, to: App.$('au_t').value }; auLoad(false); };
+  App.acts['au-verify'] = function (el) {
+    App.busy(el, App.api('auditVerify')).then(function (r) { App.modal({ title: 'Audit integrity check', size: 'sm', html: r.ok ? '<div class="alert ok">Hash chain intact across ' + r.checked + ' entries.</div>' : '<div class="alert bad">Integrity check FAILED at log entry ' + E(r.brokenAt.logId) + ' (sheet row ' + r.brokenAt.row + '). Investigate immediately.</div>' }); }, App.fail);
+  };
+})();
+</script>

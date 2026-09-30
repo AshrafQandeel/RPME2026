@@ -15,7 +15,7 @@ function createEnv(srcDir) {
   }
   class Sheet {
     constructor(name) { this.name = name; this.data = []; this.maxRows = 1000; this.maxCols = 26; }
-    getRange(r, c, nr, nc) { return new Range(this, r, c, nr || 1, nc || 1); }
+    getRange(r, c, nr, nc) { nr = nr || 1; nc = nc || 1; if (r < 1 || c < 1 || r + nr - 1 > this.maxRows || c + nc - 1 > this.maxCols) throw new Error('Range out of bounds: ' + this.name + ' r' + r + ' c' + c + ' ' + nr + 'x' + nc + ' (max ' + this.maxRows + 'x' + this.maxCols + ')'); return new Range(this, r, c, nr, nc); }
     getLastRow() { for (let i = this.data.length - 1; i >= 0; i--) if ((this.data[i] || []).some(v => v !== '' && v !== undefined)) return i + 1; return 0; }
     getLastColumn() { let m = 0; this.data.forEach(r => { (r || []).forEach((v, j) => { if (v !== '' && v !== undefined) m = Math.max(m, j + 1); }); }); return m; }
     getMaxRows() { return this.maxRows; } getMaxColumns() { return this.maxCols; }

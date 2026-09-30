@@ -47,6 +47,7 @@ as('aud1@firm.test'); bad('userList', {}, /permission/, 'auditor cannot list use
 bad('userSave', { Name: 'x', Email: 'x@firm.test', Role: 'MLRO' }, /permission/, 'auditor cannot create users');
 as('dmlro@firm.test'); bad('userSave', { Name: 'Evil', Email: 'e@firm.test', Role: 'System Administrator', Status: 'Active' }, /permission/, 'DMLRO cannot grant privileged role');
 good('userSave', { Name: 'Aud Three', Email: 'aud3@firm.test', Role: 'Auditor', Status: 'Active' }, 'DMLRO creates auditor');
+as('mlro@firm.test'); const a3 = ctx.dbAll_('Users').find(u => u.Email === 'aud3@firm.test'); good('userSave', { id: a3.UserID, Role: 'Viewer' }, 'MLRO changes a role');
 as('owner@firm.test'); bad('userSave', { id: boot.user && ctx.dbAll_('Users')[0].UserID, Status: 'Inactive' }, /own role|retain/, 'admin cannot deactivate self');
 
 section('Companies');
@@ -213,7 +214,7 @@ section('Audit trail');
 as('owner@firm.test');
 const al = good('auditList', {}); const acts = new Set(al.rows.map(r => r.Action));
 ['Company Created', 'Company Updated', 'UBO Added', 'UBO Updated', 'Document Uploaded', 'Document Replaced', 'Document Deleted', 'Risk Rating Changed', 'KYC Submitted', 'KYC Approved', 'KYC Rejected', 'User Created', 'Role Changed', 'Permission Denied', 'Company Deleted', 'Setting Changed', 'Database Backup', 'Document Downloaded', 'KYC Resubmitted']
-  .forEach(a => { if (a === 'Role Changed') return; ok(acts.has(a), 'audit has ' + a); });
+  .forEach(a => { ok(acts.has(a), 'audit has ' + a); });
 const ver = good('auditVerify'); ok(ver.ok && ver.checked > 50, 'hash chain valid over ' + ver.checked + ' entries');
 const auditSheet = ss.getSheetByName('Audit_Log'); auditSheet.data[5][9] = 'tampered'; ctx.invalidate_('Audit_Log');
 ok(!good('auditVerify').ok, 'tampering detected');

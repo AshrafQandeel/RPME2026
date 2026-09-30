@@ -1,0 +1,130 @@
+<script>
+App.kyc = (function () {
+  var E = App.esc, K = null, P = null, RF = null;
+
+  // =============================================================== KYC review tab
+  function companyTab(box, Pp, refresh) {
+    P = Pp; RF = refresh;
+    return App.api('kycGet', { companyId: P.id }).then(function (d) { K = d; render(box); });
+  }
+  function readItems(box) {
+    var o = {};
+    box.querySelectorAll('[data-item]').forEach(function (row) {
+      var id = row.dataset.item;
+      o[id] = { done: row.querySelector('.k-done').checked, na: row.querySelector('.k-na').checked, comment: row.querySelector('.k-com').value };
+    });
+    return o;
+  }
+  function render(box) {
+    var r = K.review, c = K.company, can = function (a) { return K.actions.indexOf(a) >= 0; }, ed = can('save');
+    if (!r) { box.innerHTML = '<div class="alert info">No KYC review exists yet for this company.</div>'; return; }
+    var done = K.items.filter(function (i) { var x = r.Checklist[i.id]; return x && (x.done || x.na); }).length, pct = Math.round(done / K.items.length * 100);
+    var eng = K.engagements.map(function (e) { return e.EngagementType + ' (' + e.EngagementStatus + ')'; }).join(', ') || 'None';
+    box.innerHTML = '<div class="card"><div class="row"><h2 style="margin:0">KYC Review - cycle ' + r.CycleNo + '</h2> ' + App.badge(r.Status) + '<span style="flex:1"></span><span class="muted mono">' + E(r.ReviewID) + '</span></div><br>' +
+      App.kv([['Company', c.LegalName], ['QFC number', c.QFCNumber], ['CR number', c.CRNumber], ['Engagement(s)', eng], ['Risk rating', App.badge(c.RiskRating), 1], ['Last review', c.LastKycReviewDate], ['Next review', c.NextKycReviewDate], ['Submitted by', r.SubmittedBy ? r.SubmittedBy + ' (' + App.fmtTs(r.SubmittedAt) + ')' : ''], ['Reviewer', r.ReviewerEmail]]) +
+      (r.DecisionComments ? '<div class="alert ' + (r.Decision === 'Approved' ? 'ok' : 'bad') + '" style="margin-top:12px"><b>' + E(r.Decision) + ':</b> ' + E(r.DecisionComments) + '</div>' : '') + '</div>' +
+      (K.segregationNote ? '<div class="alert info">' + E(K.segregationNote) + '</div>' : '') + App.alertBox('warn', K.issues, 'Approval requirements not yet met') +
+      '<div class="card"><div class="row"><h2 style="margin:0">Checklist</h2><span style="flex:1"></span><span class="muted">' + done + ' / ' + K.items.length + ' complete</span></div><div class="progress" style="margin:8px 0 12px"><i style="width:' + pct + '%"></i></div>' +
+      '<div class="checklist"><div class="it muted" style="font-size:11px"><span></span><span>ITEM</span><span>N/A</span><span>COMMENT</span></div>' + K.items.map(function (i) {
+        var x = r.Checklist[i.id] || {};
+        return '<div class="it" data-item="' + E(i.id) + '"><input type="checkbox" class="k-done" aria-label="' + E(i.label) + '"' + (x.done ? ' checked' : '') + (ed ? '' : ' disabled') + '><span>' + E(i.label) + (x.by ? '<div class="muted" style="font-size:11px">' + E(x.by) + ' ' + E(App.fmtTs(x.at)) + '</div>' : '') + '</span>' +
+          '<input type="checkbox" class="k-na" aria-label="Not applicable"' + (x.na ? ' checked' : '') + (ed ? '' : ' disabled') + '><input class="k-com" maxlength="500" placeholder="Comment" value="' + E(x.comment || '') + '"' + (ed ? '' : ' disabled') + '></div>';
+      }).join('') + '</div><div class="row" style="margin-top:14px">' +
+      (can('save') ? '<button data-act="k-save">Save checklist</button>' : '') + (can('submit') ? '<button class="primary" data-act="k-submit">' + (r.Status === 'Draft' ? 'Submit for review' : 'Resubmit for review') + '</button>' : '') +
+      (can('start') ? '<button class="primary" data-act="k-start">Start review</button>' : '') + (can('approve') ? '<button class="ok" data-act="k-approve">Approve</button>' : '') + (can('reject') ? '<button class="danger" data-act="k-reject">Reject</button>' : '') +
+      (can('return') ? '<button data-act="k-return">Return to auditor</button>' : '') + (can('reopen') ? '<button class="primary" data-act="k-reopen">Start new review cycle</button>' : '') + '</div></div>' +
+      '<div class="card"><h2>Review history</h2>' + App.tbl([{ h: 'Review', f: function (x) { return '<span class="mono">' + E(x.ReviewID) + '</span>'; } }, { h: 'Cycle', f: function (x) { return x.CycleNo; } }, { h: 'Status', f: function (x) { return App.badge(x.Status); } }, { h: 'Submitted by', f: function (x) { return E(x.SubmittedBy); } },
+        { h: 'Reviewer', f: function (x) { return E(x.ReviewerEmail); } }, { h: 'Decision', f: function (x) { return E(x.Decision) + '<div class="muted">' + E(x.DecisionComments) + '</div>'; } }, { h: 'Reviewed', f: function (x) { return E(App.fmtTs(x.ReviewedAt)); } }, { h: 'Next review', f: function (x) { return E(x.NextReviewDate); } }], K.history) + '</div>';
+  }
+  function act(name, extra, ask) {
+    var box = App.$('ctab');
+    var run = function (comments) {
+      var pre = K.actions.indexOf('save') >= 0 && name !== 'kycStart' && name !== 'kycReopen' ? App.api('kycSave', { reviewId: K.review.ReviewID, items: readItems(box) }) : Promise.resolve();
+      return pre.then(function () { return App.api(name, Object.assign({ reviewId: K.review.ReviewID, comments: comments }, extra || {})); })
+        .then(function () { App.toast('Done.', 'ok'); return RF(); }, App.fail);
+    };
+    if (ask) App.prompt(ask.title, ask.label, { required: ask.required, ok: ask.ok, cls: ask.cls }).then(function (v) { if (v !== null) run(v); });
+    else run('');
+  }
+  App.acts['k-save'] = function () { App.api('kycSave', { reviewId: K.review.ReviewID, items: readItems(App.$('ctab')) }).then(function () { App.toast('Checklist saved.', 'ok'); return RF(); }, App.fail); };
+  App.acts['k-submit'] = function () { act('kycSubmit', {}, { title: 'Submit for MLRO review', label: 'Optional note for the reviewer:', required: false, ok: 'Submit' }); };
+  App.acts['k-start'] = function () { act('kycStart'); };
+  App.acts['k-approve'] = function () { act('kycApprove', {}, { title: 'Approve KYC review', label: 'Approval comments (optional):', required: false, ok: 'Approve', cls: 'ok' }); };
+  App.acts['k-reject'] = function () { act('kycReject', {}, { title: 'Reject KYC review', label: 'Reason for rejection (required):', required: true, ok: 'Reject', cls: 'danger' }); };
+  App.acts['k-return'] = function () { act('kycReturn', {}, { title: 'Return to auditor', label: 'Optional note:', required: false, ok: 'Return' }); };
+  App.acts['k-reopen'] = function () {
+    App.prompt('Start new review cycle', 'Reason (e.g. change of UBO, periodic review). The approved record stays locked until this cycle is approved:', { ok: 'Start' }).then(function (v) {
+      if (v) App.api('kycReopen', { companyId: P.id, reason: v }).then(function () { App.toast('New review cycle started.', 'ok'); return RF(); }, App.fail);
+    });
+  };
+
+  // =============================================================== risk assessment tab
+  var R = null;
+  function calc() {
+    var cfg = R.config, num = 0, den = 0, esc = [], missing = 0;
+    cfg.factors.forEach(function (f) {
+      var el = App.$('rk_' + f.id), v = el ? el.value : '', o = f.options.filter(function (x) { return x.v === v; })[0];
+      if (!o) { missing++; return; }
+      var max = Math.max.apply(null, f.options.map(function (x) { return x.s; })) || 1;
+      num += f.weight * o.s; den += f.weight * max; if (o.esc) esc.push(f.label);
+    });
+    var score = den ? Math.round(num / den * 1000) / 10 : 0, rating = score >= cfg.thresholds.highFrom ? 'High' : score >= cfg.thresholds.mediumFrom ? 'Medium' : 'Low';
+    if (esc.length) rating = 'High';
+    return { score: score, rating: rating, complete: missing === 0, esc: esc, missing: missing };
+  }
+  function paintCalc() {
+    var c = calc(), el = App.$('rk_res'); if (!el) return;
+    el.innerHTML = '<div class="row"><div><div class="muted" style="font-size:11px">SCORE</div><b style="font-size:22px">' + c.score + '</b> / 100</div><div><div class="muted" style="font-size:11px">CALCULATED RATING</div>' + (c.complete ? App.badge(c.rating) : '<span class="muted">Answer all factors</span>') + '</div>' +
+      '<div class="muted">Thresholds: Medium &ge; ' + R.config.thresholds.mediumFrom + ', High &ge; ' + R.config.thresholds.highFrom + '</div></div>' + (c.esc.length ? '<div class="alert warn" style="margin-top:8px">Escalation flag(s) force High: ' + E(c.esc.join('; ')) + '</div>' : '');
+    var fr = App.$('rk_final'); if (fr && !fr.dataset.touched && c.complete) fr.value = c.rating;
+  }
+  function riskTab(box, Pp, refresh) {
+    P = Pp; RF = refresh;
+    return App.api('riskGet', { companyId: P.id }).then(function (d) {
+      R = d; var cur = d.current ? d.current.Answers : {}, cats = [], ed = d.can.assess;
+      d.config.factors.forEach(function (f) { if (cats.indexOf(f.category) < 0) cats.push(f.category); });
+      box.innerHTML = '<div class="alert info">' + E(d.config.note || '') + '</div><div class="card"><div class="row"><h2 style="margin:0">Risk assessment</h2><span style="flex:1"></span>' + (ed ? '<button data-act="rk-hints">Apply suggestions from recorded data</button><button class="primary" data-act="rk-save">Save assessment</button>' : '') + '</div>' +
+        cats.map(function (cat) {
+          return '<div class="sect-title">' + E(cat) + '</div>' + d.config.factors.filter(function (f) { return f.category === cat; }).map(function (f) {
+            var v = cur[f.id] || '', h = d.hints[f.id];
+            return '<div class="row" style="padding:5px 0;border-bottom:1px solid var(--line)"><label for="rk_' + E(f.id) + '" style="flex:1 1 240px">' + E(f.label) + ' <span class="muted">(weight ' + f.weight + ')</span></label><select id="rk_' + E(f.id) + '" data-change="rk-calc" style="flex:1 1 320px"' + (ed ? '' : ' disabled') + '><option value="">- select -</option>' +
+              f.options.map(function (o) { return '<option value="' + E(o.v) + '"' + (o.v === v ? ' selected' : '') + '>' + E(o.v) + (o.esc ? ' [escalates]' : '') + '</option>'; }).join('') + '</select>' + (h && h !== v ? '<span class="muted" style="flex:1 1 100%;font-size:12px">Suggested from data: ' + E(h) + '</span>' : '') + '</div>';
+          }).join('');
+        }).join('') + '<div class="sect-title">Result</div><div id="rk_res"></div><div class="form" style="margin-top:12px"><div class="f wide"><label for="rk_notes">Assessment notes</label><textarea id="rk_notes"' + (ed ? '' : ' disabled') + '>' + E(d.current ? d.current.Notes : '') + '</textarea></div></div></div>' +
+        '<div class="card"><h2>Final risk rating</h2><p>Current final rating: ' + App.badge(d.companyRating) + (d.current && d.current.OverrideReason ? ' <span class="muted">Override reason: ' + E(d.current.OverrideReason) + '</span>' : '') + '</p>' +
+        (d.can.finalize ? '<div class="form"><div class="f"><label for="rk_final">Set final rating (MLRO / DMLRO)</label><select id="rk_final">' + ['Low', 'Medium', 'High'].map(function (x) { return '<option' + (x === d.companyRating ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select></div><div class="f"><label for="rk_reason">Reason (required if different from calculated)</label><input id="rk_reason" maxlength="500"></div></div><br><button class="primary" data-act="rk-final">Set final rating</button>' : '<p class="muted">Only the MLRO / DMLRO can set the final risk rating.</p>') + '</div>' +
+        '<div class="card"><h2>Assessment history</h2>' + App.tbl([{ h: 'When', f: function (x) { return E(App.fmtTs(x.AssessedAt)); } }, { h: 'By', f: function (x) { return E(x.AssessedBy); } }, { h: 'Score', f: function (x) { return E(x.Score); } }, { h: 'Calculated', f: function (x) { return App.badge(x.CalculatedRating); } }, { h: 'Final', f: function (x) { return App.badge(x.FinalRating) + '<div class="muted">' + E(x.FinalRatingBy) + '</div>'; } }, { h: 'Override reason', f: function (x) { return E(x.OverrideReason); } }], d.history) + '</div>';
+      var fr = App.$('rk_final'); if (fr && d.companyRating !== 'Not Rated') fr.dataset.touched = '1';
+      paintCalc();
+    });
+  }
+  function answers() { var a = {}; R.config.factors.forEach(function (f) { var v = App.$('rk_' + f.id).value; if (v) a[f.id] = v; }); return a; }
+  App.changes['rk-calc'] = paintCalc;
+  App.acts['rk-hints'] = function () { Object.keys(R.hints).forEach(function (k) { var el = App.$('rk_' + k); if (el) el.value = R.hints[k]; }); paintCalc(); App.toast('Suggestions applied - review before saving.'); };
+  App.acts['rk-save'] = function () {
+    App.api('riskSave', { companyId: P.id, answers: answers(), notes: App.$('rk_notes').value }).then(function (r) { App.toast('Assessment saved (' + (r.complete ? r.rating : 'incomplete') + ').', 'ok'); return RF(); }, App.fail);
+  };
+  App.acts['rk-final'] = function () {
+    App.api('riskFinalize', { companyId: P.id, rating: App.$('rk_final').value, reason: App.$('rk_reason').value }).then(function (r) { App.toast('Final rating set to ' + r.rating + '.', 'ok'); return RF(); }, App.fail);
+  };
+
+  // =============================================================== reviews list page
+  var RP = {};
+  App.pages.reviews = function (view, params) {
+    RP = { status: params.status || '', pendingOnly: !!params.pendingOnly, dueOnly: !!params.dueOnly };
+    view.innerHTML = '<div class="page-head"><h1>KYC Reviews</h1><span class="sp"></span></div><div class="card"><div class="filters"><label>Status<select id="rv_st"><option value=""></option>' + App.S.boot.lists.kycStatuses.map(function (s) { return '<option' + (s === RP.status ? ' selected' : '') + '>' + E(s) + '</option>'; }).join('') + '</select></label>' +
+      '<label><span>&nbsp;</span><span><input type="checkbox" id="rv_p"' + (RP.pendingOnly ? ' checked' : '') + '> Awaiting review only</span></label><label><span>&nbsp;</span><span><input type="checkbox" id="rv_d"' + (RP.dueOnly ? ' checked' : '') + '> Due / overdue only</span></label><button class="primary" data-act="rvApply">Apply</button></div><div id="rvl"></div></div>';
+    return load();
+  };
+  function load() {
+    return App.api('kycList', RP).then(function (d) {
+      App.$('rvl').innerHTML = App.tbl([{ h: 'Company', f: function (r) { return '<a data-act="open-company" data-id="' + E(r.CompanyID) + '" data-tab="kyc"><b>' + E(r.LegalName) + '</b></a><div class="muted">' + E(r.QFCNumber) + ' ' + E(r.CRNumber) + '</div>'; } }, { h: 'Cycle', f: function (r) { return r.CycleNo; } }, { h: 'Status', f: function (r) { return App.badge(r.Status); } }, { h: 'Risk', f: function (r) { return App.badge(r.RiskRating); } },
+        { h: 'Submitted', f: function (r) { return E(r.SubmittedBy) + '<div class="muted">' + E(App.fmtTs(r.SubmittedAt)) + '</div>'; } }, { h: 'Last review', f: function (r) { return E(r.LastKycReviewDate); } }, { h: 'Next review', f: function (r) { return E(r.NextKycReviewDate) + (r.Overdue ? ' <span class="badge b-bad">Overdue</span>' : ''); } },
+        { h: '', cls: 'act', f: function (r) { return '<button class="sm" data-act="open-company" data-id="' + E(r.CompanyID) + '" data-tab="kyc">Open</button>'; } }], d.rows, { empty: 'No reviews match.' }) + '<div class="muted" style="margin-top:8px">' + d.rows.length + ' review(s)</div>';
+    }, function (e) { App.$('rvl').innerHTML = '<div class="alert bad">' + E(e.message) + '</div>'; });
+  }
+  App.acts.rvApply = function () { RP = { status: App.$('rv_st').value, pendingOnly: App.$('rv_p').checked, dueOnly: App.$('rv_d').checked }; load(); };
+
+  return { companyTab: companyTab, riskTab: riskTab };
+})();
+</script>

@@ -1,0 +1,261 @@
+<script>
+/* Core client runtime. NOTE: all authorisation is enforced on the server; the UI only hides what a user cannot do. */
+var App = (function () {
+  var S = { boot: null, route: { page: '', params: {} }, pages: {}, acts: {}, changes: {} };
+
+  function esc(s) {
+    return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; });
+  }
+  function $(id) { return document.getElementById(id); }
+  function fmtDate(s) { return s ? String(s).substr(0, 10) : ''; }
+  function fmtTs(s) { return s ? String(s).replace('T', ' ').substr(0, 16) : ''; }
+  function can(p) { return !!(S.boot && S.boot.perms[p]); }
+
+  function api(action, payload) {
+    return new Promise(function (resolve, reject) {
+      google.script.run
+        .withSuccessHandler(function (r) { if (r && r.ok) resolve(r.data); else reject({ message: (r && r.error) || 'Request failed.', code: r && r.code }); })
+        .withFailureHandler(function (e) { reject({ message: 'Connection problem. Please retry. ' + (e && e.message ? '' : ''), code: 'NETWORK' }); })
+        .api(action, payload || {}, navigator.userAgent);
+    });
+  }
+
+  function toast(msg, type) {
+    var t = document.createElement('div');
+    t.className = 'toast ' + (type || ''); t.textContent = msg;
+    $('toast-root').appendChild(t);
+    setTimeout(function () { t.remove(); }, type === 'err' ? 8000 : 3800);
+  }
+  function fail(e) { toast(e && e.message ? e.message : String(e), 'err'); }
+
+  // ---------------------------------------------------------------- modal
+  function modal(o) {
+    var ov = document.createElement('div'); ov.className = 'ov';
+    var btns = (o.buttons || [{ label: 'Close' }]).map(function (b, i) { return '<button data-i="' + i + '" class="' + esc(b.cls || '') + '">' + esc(b.label) + '</button>'; }).join('');
+    ov.innerHTML = '<div class="modal ' + esc(o.size || '') + '" role="dialog" aria-modal="true"><div class="mh"><h2 style="margin:0">' + esc(o.title) + '</h2><button class="sm" data-close aria-label="Close">&#10005;</button></div>' +
+      '<div class="mb"><div class="alert bad" data-err style="display:none"></div>' + (o.html || '') + '</div><div class="mf">' + btns + '</div></div>';
+    $('modal-root').appendChild(ov);
+    var h = {
+      el: ov, body: function () { return ov.querySelector('.mb'); },
+      close: function () { ov.remove(); if (o.onClose) o.onClose(); },
+      error: function (m) { var e = ov.querySelector('[data-err]'); e.style.display = m ? 'block' : 'none'; e.textContent = m || ''; if (m) e.scrollIntoView({ block: 'nearest' }); },
+      busy: function (b) { ov.querySelectorAll('.mf button').forEach(function (x) { x.disabled = !!b; }); }
+    };
+    ov.addEventListener('click', function (e) {
+      if (e.target.closest('[data-close]')) return h.close();
+      var b = e.target.closest('.mf button'); if (!b) return;
+      var def = (o.buttons || [{ label: 'Close' }])[Number(b.dataset.i)];
+      if (!def.onClick) return h.close();
+      h.error(''); h.busy(true);
+      Promise.resolve().then(function () { return def.onClick(h); }).then(function (keep) { if (keep !== false) h.close(); else h.busy(false); }, function (err) { h.busy(false); h.error(err && err.message || String(err)); });
+    });
+    var first = ov.querySelector('input:not([type=hidden]),select,textarea'); if (first) first.focus();
+    return h;
+  }
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { var o = document.querySelectorAll('#modal-root .ov'); if (o.length) o[o.length - 1].remove(); } });
+
+  function prompt(title, label, o) {
+    o = o || {};
+    return new Promise(function (resolve) {
+      var done = false;
+      modal({ title: title, size: 'sm', html: '<label class="muted" for="pr_v">' + esc(label) + '</label><textarea id="pr_v" maxlength="1000"></textarea>',
+        onClose: function () { if (!done) resolve(null); },
+        buttons: [{ label: 'Cancel' }, { label: o.ok || 'Confirm', cls: o.cls || 'primary', onClick: function (h) {
+          var v = h.body().querySelector('#pr_v').value.trim();
+          if (o.required !== false && !v) { h.error('This field is required.'); return false; }
+          done = true; resolve(v);
+        } }] });
+    });
+  }
+  function confirmBox(title, msg, okLabel, cls) {
+    return new Promise(function (resolve) {
+      var done = false;
+      modal({ title: title, size: 'sm', html: '<p>' + esc(msg) + '</p>', onClose: function () { if (!done) resolve(false); },
+        buttons: [{ label: 'Cancel' }, { label: okLabel || 'Confirm', cls: cls || 'primary', onClick: function () { done = true; resolve(true); } }] });
+    });
+  }
+
+  // ---------------------------------------------------------------- forms (driven by server-side field definitions)
+  var form = {
+    html: function (fields, vals, opts) {
+      vals = vals || {}; opts = opts || {};
+      return '<div class="form">' + fields.filter(function (f) { return !f.ro || opts.showRo; }).map(function (f) {
+        var v = vals[f.k] !== undefined ? vals[f.k] : (f.def !== undefined && !opts.editing ? f.def : ''), id = 'f_' + f.k, ro = f.readonly ? ' disabled' : '';
+        var wide = f.type === 'textarea' || f.k === 'HeldThroughID' ? ' wide' : '';
+        var lab = '<label for="' + id + '" class="' + (f.required ? 'req' : '') + '">' + esc(f.label) + '</label>', inp = '';
+        if (f.type === 'textarea') inp = '<textarea id="' + id + '"' + ro + ' maxlength="' + (f.max || 2000) + '">' + esc(v) + '</textarea>';
+        else if (f.type === 'select') inp = '<select id="' + id + '"' + ro + '>' + (f.required && f.def ? '' : '<option value=""></option>') + (f.options || []).map(function (o) { return '<option' + (String(o) === String(v) ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join('') + '</select>';
+        else if (f.type === 'user') inp = '<select id="' + id + '"' + ro + '><option value=""></option>' + S.boot.lists.users.map(function (u) { return '<option value="' + esc(u.email) + '"' + (u.email === v ? ' selected' : '') + '>' + esc(u.name + ' (' + u.email + ')') + '</option>'; }).join('') + '</select>';
+        else if (f.type === 'ref') inp = '<select id="' + id + '"' + ro + '><option value="">(none)</option>' + ((opts.refs || {})[f.k] || []).map(function (o) { return '<option value="' + esc(o.id) + '"' + (o.id === v ? ' selected' : '') + '>' + esc(o.label) + '</option>'; }).join('') + '</select>';
+        else if (f.type === 'flag') return '<div class="f"><label><input type="checkbox" id="' + id + '"' + (v === 'Y' ? ' checked' : '') + ro + '> ' + esc(f.label) + '</label></div>';
+        else {
+          var t = f.type === 'date' ? 'date' : f.type === 'number' ? 'number' : f.type === 'email' ? 'email' : 'text';
+          inp = '<input id="' + id + '" type="' + t + '" value="' + esc(v) + '"' + ro + (t === 'number' ? ' step="any"' + (f.min !== undefined ? ' min="' + f.min + '"' : '') + (f.max !== undefined ? ' max="' + f.max + '"' : '') : ' maxlength="' + (f.max || 250) + '"') +
+            (f.suggestions ? ' list="dl_' + f.k + '"' : '') + ' autocomplete="off">' + (f.suggestions ? '<datalist id="dl_' + f.k + '">' + f.suggestions.map(function (s) { return '<option value="' + esc(s) + '">'; }).join('') + '</datalist>' : '');
+        }
+        return '<div class="f' + wide + '">' + lab + inp + '</div>';
+      }).join('') + '</div>';
+    },
+    read: function (root, fields) {
+      var o = {};
+      fields.forEach(function (f) {
+        var el = root.querySelector('#f_' + f.k); if (!el || el.disabled) return;
+        o[f.k] = f.type === 'flag' ? (el.checked ? 'Y' : '') : el.value;
+      });
+      return o;
+    }
+  };
+
+  /** Opens a create/edit modal. o: {title, fields, values, refs, editing, onSubmit(vals)->Promise, submit} */
+  function formModal(o) {
+    return modal({ title: o.title, size: o.size || 'lg', html: (o.intro || '') + form.html(o.fields, o.values, { refs: o.refs, editing: o.editing }),
+      buttons: [{ label: 'Cancel' }, { label: o.submit || 'Save', cls: 'primary', onClick: function (h) {
+        return o.onSubmit(form.read(h.body(), o.fields), h).then(function () { return true; }, function (e) { h.error(e.message); return false; });
+      } }] });
+  }
+
+  // ---------------------------------------------------------------- ui helpers
+  var GOOD = ['Approved', 'Verified', 'Active', 'Low', 'Current', 'Clear', 'Completed', 'Yes', 'Not a PEP', 'None identified'];
+  var WARN = ['Medium', 'Under Review', 'Submitted for Review', 'Resubmitted', 'Pending', 'Uploaded', 'Draft', 'Potential match', 'Proposed', 'In progress', 'Dormant', 'Further review required', 'Not screened'];
+  var BAD = ['High', 'Rejected', 'Expired', 'Replacement Required', 'Returned to Auditor', 'Confirmed match', 'Inactive', 'Struck Off', 'PEP', 'Negative media identified', 'Cancelled', 'NO'];
+  function badge(t) {
+    if (t === '' || t === null || t === undefined) return '';
+    var c = GOOD.indexOf(t) >= 0 ? 'b-ok' : WARN.indexOf(t) >= 0 ? 'b-warn' : BAD.indexOf(t) >= 0 ? 'b-bad' : (t === 'Superseded' || t === 'Not Rated' || t === 'Not Started') ? '' : 'b-info';
+    return '<span class="badge ' + c + '">' + esc(t) + '</span>';
+  }
+  function tbl(cols, rows, o) {
+    o = o || {};
+    if (!rows.length) return '<div class="empty">' + esc(o.empty || 'No records found.') + '</div>';
+    return '<div class="tbl-wrap"><table><thead><tr>' + cols.map(function (c) { return '<th' + (c.cls ? ' class="' + c.cls + '"' : '') + '>' + esc(c.h) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+      rows.map(function (r) { return '<tr' + (o.row ? ' ' + o.row(r) : '') + '>' + cols.map(function (c) { return '<td' + (c.cls ? ' class="' + c.cls + '"' : '') + '>' + c.f(r) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div>';
+  }
+  function kv(pairs) { return '<div class="kv">' + pairs.map(function (p) { return '<div><div class="k">' + esc(p[0]) + '</div><div class="v">' + (p[2] ? p[1] : esc(p[1]) || '<span class="muted">-</span>') + '</div></div>'; }).join('') + '</div>'; }
+  function alertBox(kind, items, title) {
+    if (!items || !items.length) return '';
+    return '<div class="alert ' + kind + '">' + (title ? '<b>' + esc(title) + '</b>' : '') + '<ul>' + items.map(function (i) { return '<li>' + esc(i) + '</li>'; }).join('') + '</ul></div>';
+  }
+  function statCard(n, label, kind, go) {
+    return '<div class="stat ' + (kind || '') + (go ? ' click" data-act="go" data-page="' + esc(go.page) + '" data-params="' + esc(JSON.stringify(go.params || {})) : '') + '"><div class="n">' + esc(n) + '</div><div class="l">' + esc(label) + '</div></div>';
+  }
+  var COLORS = { High: 'var(--bad)', Medium: 'var(--warn)', Low: 'var(--ok)', 'Not rated': 'var(--muted)' };
+  var PALETTE = ['#0f5c99', '#1b9aaa', '#7b61c4', '#e07a1f', '#2f9e6e', '#c2417a', '#8a8f98'];
+  function donut(data, size) {
+    size = size || 150;
+    var total = data.reduce(function (s, d) { return s + d.value; }, 0), r = size / 2 - 12, c = 2 * Math.PI * r, off = 0;
+    if (!total) return '<div class="empty">No data</div>';
+    var segs = data.map(function (d, i) {
+      var len = d.value / total * c, s = '<circle r="' + r + '" cx="' + size / 2 + '" cy="' + size / 2 + '" fill="none" stroke="' + (d.color || PALETTE[i % PALETTE.length]) + '" stroke-width="20" stroke-dasharray="' + len + ' ' + (c - len) + '" stroke-dashoffset="' + (-off) + '" transform="rotate(-90 ' + size / 2 + ' ' + size / 2 + ')"><title>' + esc(d.label) + ': ' + d.value + '</title></circle>';
+      off += len; return s;
+    }).join('');
+    return '<div class="row" style="gap:18px"><svg width="' + size + '" height="' + size + '" role="img" aria-label="Chart">' + segs + '<text x="50%" y="50%" text-anchor="middle" dominant-baseline="central" font-size="22" font-weight="700" fill="currentColor">' + total + '</text></svg>' +
+      '<div class="legend" style="flex-direction:column;gap:6px;margin:0">' + data.map(function (d, i) { return '<span><i style="background:' + (d.color || PALETTE[i % PALETTE.length]) + '"></i>' + esc(d.label) + ' <b>' + d.value + '</b></span>'; }).join('') + '</div></div>';
+  }
+  function bars(data) {
+    var max = Math.max.apply(null, data.map(function (d) { return d.value; }).concat([1]));
+    if (!data.length) return '<div class="empty">No data</div>';
+    return data.map(function (d, i) {
+      return '<div style="margin:7px 0"><div class="row" style="justify-content:space-between;font-size:12px"><span>' + esc(d.label) + '</span><b>' + d.value + '</b></div><div class="progress"><i style="width:' + (d.value / max * 100) + '%;background:' + (d.color || PALETTE[i % PALETTE.length]) + '"></i></div></div>';
+    }).join('');
+  }
+  function busy(btn, promise) {
+    if (btn) btn.disabled = true;
+    return promise.then(function (r) { if (btn) btn.disabled = false; return r; }, function (e) { if (btn) btn.disabled = false; throw e; });
+  }
+  function readFileB64(file) {
+    return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(String(r.result).split(',')[1] || ''); }; r.onerror = function () { rej({ message: 'The file could not be read.' }); }; r.readAsDataURL(file); });
+  }
+  function b64Blob(b64, mime) {
+    var bin = atob(b64), n = bin.length, u = new Uint8Array(n);
+    for (var i = 0; i < n; i++) u[i] = bin.charCodeAt(i);
+    return new Blob([u], { type: mime });
+  }
+  function saveFile(name, mime, b64) {
+    var url = URL.createObjectURL(b64Blob(b64, mime)), a = document.createElement('a');
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  }
+  function csvCell(v) { v = String(v === null || v === undefined ? '' : v); if (/^[=+\-@\t\r]/.test(v)) v = "'" + v; return '"' + v.replace(/"/g, '""') + '"'; }
+  function saveCsv(name, sections) {
+    var out = [];
+    sections.forEach(function (s) { out.push(csvCell(s.title)); out.push(s.columns.map(csvCell).join(',')); s.rows.forEach(function (r) { out.push(r.map(csvCell).join(',')); }); out.push(''); });
+    var blob = new Blob(['﻿' + out.join('\r\n')], { type: 'text/csv;charset=utf-8' }), url = URL.createObjectURL(blob), a = document.createElement('a');
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  }
+
+  // ---------------------------------------------------------------- navigation
+  function navItems() {
+    var items = [{ id: 'dashboard', label: 'Dashboard', page: 'dashboard' }];
+    items.push({ grp: 'Companies' }, { label: 'All Companies', page: 'companies', sub: 1, match: 'companies' }, { label: 'Add Company', act: 'company-add', sub: 1, need: 'COMPANY_CREATE' }, { label: 'Pending Reviews', page: 'companies', params: { pendingOnly: true }, sub: 1, match: 'companies:pending' });
+    items.push({ grp: 'KYC / AML' }, { label: 'Reviews', page: 'reviews', sub: 1 }, { label: 'Risk Assessment', page: 'companies', params: { view: 'risk' }, sub: 1, match: 'companies:risk' }, { label: 'Expiring Documents', page: 'documents', params: { withinDays: 90 }, sub: 1, match: 'documents:exp' });
+    items.push({ grp: 'Records' }, { label: 'Documents', page: 'documents', sub: 1, match: 'documents' }, { label: 'Reports', page: 'reports', sub: 1, need: 'REPORT_VIEW' });
+    items.push({ grp: 'Administration' }, { label: 'Audit Log', page: 'audit', sub: 1, need: 'AUDIT_VIEW' }, { label: 'User Management', page: 'users', sub: 1, need: 'USER_MANAGE' });
+    if (can('SETTINGS_AML') || can('SETTINGS_SYSTEM') || can('ROLE_MANAGE')) items.push({ label: 'System Settings', page: 'settings', sub: 1 });
+    return items.filter(function (i) { return !i.need || can(i.need); });
+  }
+  function routeKey() {
+    var r = S.route, p = r.params || {};
+    if (r.page === 'companies') return p.pendingOnly ? 'companies:pending' : p.view === 'risk' ? 'companies:risk' : 'companies';
+    if (r.page === 'documents') return p.withinDays ? 'documents:exp' : 'documents';
+    if (r.page === 'company') return 'companies';
+    return r.page;
+  }
+  function renderNav() {
+    var key = routeKey();
+    $('side').innerHTML = '<div class="logo">AML / KYC Compliance<small>QFC engagement register</small></div>' + navItems().map(function (i) {
+      if (i.grp) return '<div class="grp">' + esc(i.grp) + '</div>';
+      var active = (i.match || i.page) === key || (i.page === 'dashboard' && key === 'dashboard');
+      return '<a class="nav ' + (i.sub ? 'sub ' : '') + (active ? 'active' : '') + '" data-act="' + (i.act || 'go') + '"' + (i.page ? ' data-page="' + i.page + '"' : '') + ' data-params="' + esc(JSON.stringify(i.params || {})) + '">' + esc(i.label) + '</a>';
+    }).join('') + '<div class="me"><b>' + esc(S.boot.user.Name) + '</b><br>' + esc(S.boot.user.Role) + '<br><span style="opacity:.7">' + esc(S.boot.user.Email) + '</span></div>';
+    $('whoami').textContent = S.boot.user.Role;
+  }
+  function go(page, params) {
+    S.route = { page: page, params: params || {} };
+    renderNav(); $('side').classList.remove('open');
+    var v = $('view'); v.innerHTML = '<div class="empty"><span class="spinner"></span> Loading...</div>';
+    window.scrollTo(0, 0);
+    var fn = S.pages[page];
+    if (!fn) { v.innerHTML = '<div class="alert bad">Page not found.</div>'; return; }
+    Promise.resolve().then(function () { return fn(v, S.route.params); }).catch(function (e) { v.innerHTML = '<div class="alert bad">' + esc(e && e.message || e) + '</div>'; });
+  }
+  function reload() { go(S.route.page, S.route.params); }
+
+  // ---------------------------------------------------------------- global search
+  var st = null;
+  function initSearch() {
+    var inp = $('gsearch'), box = $('results');
+    inp.addEventListener('input', function () {
+      clearTimeout(st); var q = inp.value.trim();
+      if (q.length < 2) { box.style.display = 'none'; return; }
+      st = setTimeout(function () {
+        api('search', { q: q }).then(function (d) {
+          box.innerHTML = d.rows.length ? d.rows.map(function (r) { return '<div class="r" data-act="open-company" data-id="' + esc(r.CompanyID) + '"><b>' + esc(r.LegalName) + '</b> ' + badge(r.RiskRating) + '<div class="muted" style="font-size:12px">' + esc(r.QFCNumber || '') + ' ' + esc(r.CRNumber || '') + ' &middot; ' + esc(r.matches) + '</div></div>'; }).join('') : '<div class="r muted">No matches</div>';
+          box.style.display = 'block';
+        }, fail);
+      }, 300);
+    });
+    document.addEventListener('click', function (e) { if (!e.target.closest('.search')) box.style.display = 'none'; });
+  }
+
+  S.acts.go = function (el) { go(el.dataset.page, JSON.parse(el.dataset.params || '{}')); };
+  S.acts['open-company'] = function (el) { $('results').style.display = 'none'; go('company', { id: el.dataset.id, tab: el.dataset.tab }); };
+  S.acts.menu = function () { $('side').classList.toggle('open'); };
+  S.acts['company-add'] = function () { S.pages.companyAdd(); };
+  document.addEventListener('click', function (e) {
+    var el = e.target.closest('[data-act]'); if (!el || el.disabled) return;
+    var a = S.acts[el.dataset.act];
+    if (a) { if (el.tagName === 'A') e.preventDefault(); a(el, e); }
+  });
+  document.addEventListener('change', function (e) { var el = e.target.closest('[data-change]'); if (el && S.changes[el.dataset.change]) S.changes[el.dataset.change](el, e); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Enter') { var el = e.target.closest('[data-enter]'); if (el && S.changes[el.dataset.enter]) { e.preventDefault(); S.changes[el.dataset.enter](el, e); } } });
+
+  function start() {
+    initSearch();
+    api('bootstrap').then(function (b) {
+      S.boot = b; go('dashboard');
+    }, function (e) { $('view').innerHTML = '<div class="alert bad">' + esc(e.message) + '</div>'; });
+  }
+
+  return { S: S, esc: esc, $: $, api: api, toast: toast, fail: fail, modal: modal, prompt: prompt, confirm: confirmBox, form: form, formModal: formModal, badge: badge, tbl: tbl, kv: kv, alertBox: alertBox,
+    statCard: statCard, donut: donut, bars: bars, COLORS: COLORS, busy: busy, readFileB64: readFileB64, saveFile: saveFile, saveCsv: saveCsv, b64Blob: b64Blob, fmtDate: fmtDate, fmtTs: fmtTs,
+    can: can, go: go, reload: reload, start: start, pages: S.pages, acts: S.acts, changes: S.changes, fields: function (k) { return S.boot.fields[k]; } };
+})();
+</script>

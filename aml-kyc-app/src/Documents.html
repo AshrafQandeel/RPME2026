@@ -1,0 +1,117 @@
+<script>
+App.docs = (function () {
+  var E = App.esc, CTX = { d: null, P: null, refresh: null, hist: false };
+
+  function expiryCell(d) {
+    if (!d.ExpiryDate) return '<span class="muted">-</span>';
+    var n = d.DaysToExpiry, cls = n < 0 ? 'b-bad' : n <= 30 ? 'b-warn' : '';
+    return E(d.ExpiryDate) + (d.VersionStatus === 'Current' && (n < 0 || n <= 90) ? ' <span class="badge ' + cls + '">' + (n < 0 ? 'expired ' + (-n) + 'd ago' : 'in ' + n + 'd') + '</span>' : '');
+  }
+
+  /** Upload dialog. preset: {docType, replacesDocId, subject}. */
+  function upload(companyId, preset, done) {
+    preset = preset || {};
+    return App.api('docList', { companyId: companyId }).then(function (d) {
+      var rules = d.fileRules, types = d.docTypes.map(function (t) { return t.type; });
+      var html = '<div class="form"><div class="f"><label class="req" for="u_type">Document type</label><select id="u_type"' + (preset.replacesDocId ? ' disabled' : '') + '>' + types.map(function (t) { return '<option' + (t === preset.docType ? ' selected' : '') + '>' + E(t) + '</option>'; }).join('') + '</select></div>' +
+        '<div class="f"><label for="u_subj">Relates to (UBO / engagement)</label><select id="u_subj"' + (preset.replacesDocId ? ' disabled' : '') + '><option value="">(company-level)</option>' + d.subjects.map(function (s) { return '<option value="' + E(s.id) + '"' + (s.id === preset.subject ? ' selected' : '') + '>' + E(s.label) + '</option>'; }).join('') + '</select></div>' +
+        '<div class="f"><label for="u_exp">Expiry date (where applicable)</label><input type="date" id="u_exp"></div>' +
+        '<div class="f"><label class="req" for="u_file">File (' + E(rules.allowedExt.join(', ')) + '; max ' + rules.maxMB + ' MB)</label><input type="file" id="u_file" accept="' + rules.allowedExt.map(function (e) { return '.' + e; }).join(',') + '"></div>' +
+        '<div class="f wide"><label for="u_rem">Remarks</label><textarea id="u_rem" maxlength="1000"></textarea></div></div>' +
+        '<p class="muted" id="u_hint"></p>';
+      var h = App.modal({ title: preset.replacesDocId ? 'Upload replacement' : 'Upload document', html: html, size: 'lg', buttons: [{ label: 'Cancel' }, { label: 'Upload', cls: 'primary', onClick: function (m) {
+        var b = m.body(), f = b.querySelector('#u_file').files[0];
+        if (!f) throw { message: 'Choose a file to upload.' };
+        var ext = (f.name.split('.').pop() || '').toLowerCase();
+        if (rules.allowedExt.indexOf(ext) < 0) throw { message: 'File type not supported. Allowed: ' + rules.allowedExt.join(', ') + '.' };
+        if (f.size > rules.maxMB * 1048576) throw { message: 'File size exceeds allowed limit (' + rules.maxMB + ' MB).' };
+        return App.readFileB64(f).then(function (b64) {
+          return App.api('docUpload', { companyId: companyId, docType: preset.replacesDocId ? preset.docType : b.querySelector('#u_type').value, subject: preset.replacesDocId ? (preset.subject || '') : b.querySelector('#u_subj').value,
+            expiryDate: b.querySelector('#u_exp').value, remarks: b.querySelector('#u_rem').value, fileName: f.name, base64: b64, replacesDocId: preset.replacesDocId || '' });
+        }).then(function (r) { App.toast('Document uploaded.', 'ok'); if (r.warnings.length) App.modal({ title: 'Note', size: 'sm', html: App.alertBox('warn', r.warnings) }); if (done) done(r); });
+      } }] });
+      var upd = function () {
+        var t = d.docTypes.filter(function (x) { return x.type === h.body().querySelector('#u_type').value; })[0];
+        h.body().querySelector('#u_hint').textContent = preset.replacesDocId ? 'The current version will be kept as history and marked Superseded.' : t ? (t.multi ? 'Multiple files are allowed for this type. Uploading for the same "relates to" item supersedes the previous version.' : 'Only one current document is kept: an existing one will be marked Superseded (history is retained).') + (t.expires ? ' This document type normally has an expiry date.' : '') : '';
+      };
+      h.body().querySelector('#u_type').addEventListener('change', upd); upd();
+    }, App.fail);
+  }
+
+  function open(docId, mode) {
+    return App.api('docAccess', { docId: docId, mode: mode }).then(function (f) {
+      if (mode === 'download') return App.saveFile(f.name, f.mimeType, f.base64);
+      var url = URL.createObjectURL(App.b64Blob(f.base64, f.mimeType)), body;
+      if (f.mimeType === 'application/pdf') body = '<p class="muted">If the preview is blank in your browser, use Download.</p><iframe src="' + url + '" style="width:100%;height:64vh;border:0" title="Document"></iframe>';
+      else if (/^image\//.test(f.mimeType)) body = '<img src="' + url + '" alt="Document" style="max-width:100%">';
+      else { App.saveFile(f.name, f.mimeType, f.base64); return; }
+      App.modal({ title: f.name, size: 'lg', html: body, onClose: function () { URL.revokeObjectURL(url); }, buttons: [{ label: 'Download', cls: 'primary', onClick: function () { App.saveFile(f.name, f.mimeType, f.base64); return false; } }, { label: 'Close' }] });
+    }, App.fail);
+  }
+
+  function statusDialog(d) {
+    var opts = CTX.d ? CTX.d.statuses : App.S.boot.lists.docStatuses;
+    App.modal({ title: 'Change status - ' + d.FileName, size: 'sm', html: '<div class="form"><div class="f wide"><label>Status</label><select id="s_st">' + opts.map(function (s) { return '<option' + (s === d.Status ? ' selected' : '') + '>' + E(s) + '</option>'; }).join('') + '</select></div><div class="f wide"><label>Remarks (required for Rejected / Replacement Required)</label><textarea id="s_rm"></textarea></div></div>',
+      buttons: [{ label: 'Cancel' }, { label: 'Save', cls: 'primary', onClick: function (m) {
+        return App.api('docSetStatus', { docId: d.DocumentID, status: m.body().querySelector('#s_st').value, remarks: m.body().querySelector('#s_rm').value }).then(function () { App.toast('Status updated.', 'ok'); if (CTX.refresh) CTX.refresh(); else App.reload(); });
+      } }] });
+  }
+
+  function companyTab(box, P, refresh) {
+    CTX.P = P; CTX.refresh = refresh;
+    return App.api('docList', { companyId: P.id }).then(function (d) {
+      CTX.d = d;
+      var rows = d.documents.filter(function (x) { return CTX.hist || x.VersionStatus === 'Current'; });
+      var miss = d.requirements.filter(function (r) { return !r.met; });
+      box.innerHTML = '<div class="card"><div class="row"><h2 style="margin:0">Documents</h2><span style="flex:1"></span><label><input type="checkbox" id="dh"' + (CTX.hist ? ' checked' : '') + ' data-change="dochist"> Show version history</label>' +
+        (d.canUpload ? '<button class="primary" data-act="doc-up">+ Upload document</button>' : '') + '</div>' +
+        (d.requirements.length ? '<div class="alert ' + (miss.length ? 'warn' : 'ok') + '" style="margin-top:12px"><b>' + (miss.length ? miss.length + ' mandatory item(s) missing or not valid' : 'All mandatory documents present') + '</b>' + (miss.length ? '<ul>' + miss.map(function (m) { return '<li>' + E(m.label) + '</li>'; }).join('') + '</ul>' : '') + '</div>' : '') +
+        App.tbl([{ h: 'Document type', f: function (r) { return '<b>' + E(r.DocType) + '</b>' + (r.Subject ? '<div class="muted">' + E(r.Subject) + '</div>' : ''); } }, { h: 'File name', f: function (r) { return E(r.FileName) + '<div class="muted">' + E(r.Remarks) + '</div>'; } },
+          { h: 'Status', f: function (r) { return App.badge(r.EffStatus) + (r.VersionStatus === 'Superseded' ? ' <span class="badge">Superseded</span>' : ''); } }, { h: 'Uploaded by', f: function (r) { return E(r.UploadedBy); } }, { h: 'Upload date', f: function (r) { return E(App.fmtTs(r.UploadDate)); } },
+          { h: 'Expiry', f: expiryCell }, { h: 'Version', f: function (r) { return 'v' + r.VersionNo + ' ' + (r.VersionStatus === 'Current' ? '<span class="badge b-ok">Current</span>' : ''); } },
+          { h: 'Actions', cls: 'act', f: function (r) {
+            return '<button class="sm" data-act="doc-view" data-id="' + E(r.DocumentID) + '">View</button> <button class="sm" data-act="doc-dl" data-id="' + E(r.DocumentID) + '">Download</button>' +
+              (r._perm.replace ? ' <button class="sm" data-act="doc-rep" data-id="' + E(r.DocumentID) + '">Upload replacement</button>' : '') + (r._perm.status ? ' <button class="sm" data-act="doc-st" data-id="' + E(r.DocumentID) + '">Status</button>' : '') +
+              (r._perm.del ? ' <button class="sm danger" data-act="doc-del" data-id="' + E(r.DocumentID) + '">Delete</button>' : '');
+          } }], rows, { empty: 'No documents uploaded yet.' }) + '</div>';
+    });
+  }
+  function byId(id) { return (CTX.d ? CTX.d.documents : []).filter(function (x) { return x.DocumentID === id; })[0]; }
+  App.acts['doc-up'] = function () { upload(CTX.P.id, {}, CTX.refresh); };
+  App.acts['doc-view'] = function (el) { open(el.dataset.id, 'view'); };
+  App.acts['doc-dl'] = function (el) { open(el.dataset.id, 'download'); };
+  App.acts['doc-rep'] = function (el) { var d = byId(el.dataset.id); upload(CTX.P.id, { docType: d.DocType, replacesDocId: d.DocumentID, subject: d.Subject }, CTX.refresh); };
+  App.acts['doc-st'] = function (el) { statusDialog(byId(el.dataset.id)); };
+  App.acts['doc-del'] = function (el) {
+    App.prompt('Delete document', 'Reason for deleting this document (recorded in the audit log; the Drive file is retained):', { ok: 'Delete', cls: 'danger' }).then(function (r) {
+      if (r) App.api('docDelete', { docId: el.dataset.id, reason: r }).then(function () { App.toast('Document deleted.', 'ok'); CTX.refresh(); }, App.fail);
+    });
+  };
+  App.changes.dochist = function (el) { CTX.hist = el.checked; companyTab(App.$('ctab'), CTX.P, CTX.refresh); };
+
+  // ---- global register page
+  var GF = {};
+  App.pages.documents = function (view, params) {
+    GF = { status: params.status || '', withinDays: params.withinDays || '', q: '', docType: '' };
+    var L = App.S.boot.lists, exp = !!params.withinDays;
+    view.innerHTML = '<div class="page-head"><h1>' + (exp ? 'Expiring Documents' : 'Documents') + '</h1><span class="sp"></span><span class="muted">Current versions only. Open a company to upload or manage documents.</span></div><div class="card"><div class="filters">' +
+      '<label>Search<input id="dg_q" type="search" data-enter="dgApply" style="width:220px"></label><label>Status<select id="dg_st"><option value=""></option>' + L.docStatuses.map(function (s) { return '<option' + (s === GF.status ? ' selected' : '') + '>' + E(s) + '</option>'; }).join('') + '</select></label>' +
+      '<label>Type<select id="dg_ty"><option value=""></option>' + L.docTypes.map(function (t) { return '<option>' + E(t.type) + '</option>'; }).join('') + '</select></label>' +
+      '<label>Expires within (days)<input id="dg_wd" type="number" min="0" style="width:110px" value="' + E(GF.withinDays) + '" data-enter="dgApply"></label><label>Expiry from<input id="dg_ef" type="date"></label><label>Expiry to<input id="dg_et" type="date"></label>' +
+      '<button class="primary" data-act="dgApply">Apply</button></div><div id="dgl"></div></div>';
+    return dgLoad();
+  };
+  function dgLoad() {
+    return App.api('docListAll', GF).then(function (d) {
+      App.$('dgl').innerHTML = App.tbl([{ h: 'Company', f: function (r) { return '<a data-act="open-company" data-id="' + E(r.CompanyID) + '" data-tab="documents">' + E(r.CompanyName) + '</a>'; } }, { h: 'Document', f: function (r) { return '<b>' + E(r.DocType) + '</b><div class="muted">' + E(r.FileName) + '</div>'; } },
+        { h: 'Status', f: function (r) { return App.badge(r.EffStatus); } }, { h: 'Expiry', f: expiryCell }, { h: 'Uploaded', f: function (r) { return E(App.fmtTs(r.UploadDate)) + '<div class="muted">' + E(r.UploadedBy) + '</div>'; } }, { h: 'Ver.', f: function (r) { return 'v' + r.VersionNo; } }], d.rows, { empty: 'No documents match.' }) +
+        '<div class="muted" style="margin-top:8px">' + d.total + ' document(s)' + (d.total > 500 ? ' (first 500 shown)' : '') + '</div>';
+    }, function (e) { App.$('dgl').innerHTML = '<div class="alert bad">' + E(e.message) + '</div>'; });
+  }
+  App.acts.dgApply = App.changes.dgApply = function () {
+    GF = { q: App.$('dg_q').value, status: App.$('dg_st').value, docType: App.$('dg_ty').value, withinDays: App.$('dg_wd').value, expiryFrom: App.$('dg_ef').value, expiryTo: App.$('dg_et').value };
+    dgLoad();
+  };
+  return { companyTab: companyTab, upload: upload };
+})();
+</script>

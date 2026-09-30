@@ -27,11 +27,9 @@ function setupAMLSystem() {
     if (!sh) { sh = ss.insertSheet(name); created = true; }
     var have = sh.getLastColumn() ? sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String).filter(String) : [];
     var missing = cols.filter(function (c) { return have.indexOf(c) < 0; });
-    if (missing.length) {
-      sh.getRange(1, have.length + 1, 1, missing.length).setValues([missing]);
-      if (sh.getMaxColumns() < have.length + missing.length) sh.insertColumnsAfter(sh.getMaxColumns(), have.length + missing.length - sh.getMaxColumns());
-    }
     var n = have.length + missing.length;
+    if (sh.getMaxColumns() < n) sh.insertColumnsAfter(sh.getMaxColumns(), n - sh.getMaxColumns());   // must precede writes
+    if (missing.length) sh.getRange(1, have.length + 1, 1, missing.length).setValues([missing]);
     sh.getRange(1, 1, 1, n).setFontWeight('bold').setBackground('#0b3a5b').setFontColor('#ffffff');
     sh.setFrozenRows(1);
     sh.getRange(1, 1, sh.getMaxRows(), n).setNumberFormat('@');   // plain text: no date/number/formula coercion
