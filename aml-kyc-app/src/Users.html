@@ -1,0 +1,24 @@
+<script>
+(function () {
+  var E = App.esc, U = null;
+  App.pages.users = function (view) {
+    return App.api('userList').then(function (d) {
+      U = d;
+      view.innerHTML = '<div class="page-head"><h1>User Management</h1><span class="sp"></span><button class="primary" data-act="u-add">+ Add user</button></div><div class="card">' +
+        '<div class="alert info">Access is granted only to Google accounts listed here with status Active. Users are deactivated rather than deleted so the audit trail stays intact. Role permissions are configured in System Settings (ROLE_PERMISSIONS).</div>' +
+        App.tbl([{ h: 'User ID', f: function (u) { return '<span class="mono">' + E(u.UserID) + '</span>'; } }, { h: 'Name', f: function (u) { return '<b>' + E(u.Name) + '</b>'; } }, { h: 'Email', f: function (u) { return E(u.Email); } }, { h: 'Role', f: function (u) { return E(u.Role); } },
+          { h: 'Department', f: function (u) { return E(u.Department); } }, { h: 'Status', f: function (u) { return App.badge(u.Status); } }, { h: 'Date added', f: function (u) { return E(App.fmtDate(u.DateAdded)); } }, { h: 'Last login', f: function (u) { return E(App.fmtTs(u.LastLogin)); } },
+          { h: 'Notes', f: function (u) { return E(u.Notes); } }, { h: '', cls: 'act', f: function (u) { return '<button class="sm" data-act="u-edit" data-id="' + E(u.UserID) + '">Edit</button>'; } }], d.users) + '</div>';
+    });
+  };
+  function open(rec) {
+    var fields = U.fields.map(function (f) { var c = Object.assign({}, f); if (c.k === 'Role' && !App.can('ROLE_MANAGE')) c.options = c.options.filter(function (r) { return U.privilegedRoles.indexOf(r) < 0; }); return c; });
+    App.formModal({ title: rec ? 'Edit user' : 'Add user', fields: fields, values: rec, editing: !!rec, size: 'md', onSubmit: function (v) {
+      if (rec) v.id = rec.UserID;
+      return App.api('userSave', v).then(function () { App.toast('User saved.', 'ok'); App.reload(); });
+    } });
+  }
+  App.acts['u-add'] = function () { open(null); };
+  App.acts['u-edit'] = function (el) { open(U.users.filter(function (u) { return u.UserID === el.dataset.id; })[0]); };
+})();
+</script>

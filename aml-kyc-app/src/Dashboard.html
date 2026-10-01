@@ -1,0 +1,25 @@
+<script>
+App.pages.dashboard = function (view) {
+  return App.api('dashboard').then(function (d) {
+    var c = d.companies, doc = d.documents, k = d.kyc, ch = d.charts, E = App.esc;
+    var riskData = ['High', 'Medium', 'Low', 'Not rated'].map(function (r) { return { label: r, value: ch.risk[r] || 0, color: App.COLORS[r] }; });
+    var kycData = Object.keys(ch.kycStatus).map(function (s) { return { label: s, value: ch.kycStatus[s] }; });
+    var expData = [{ label: 'Expired', value: ch.expiry.expired, color: 'var(--bad)' }].concat(ch.windows.map(function (w, i) { return { label: 'Within ' + w + ' days', value: ch.expiry['w' + w], color: i < 2 ? 'var(--warn)' : '#1b9aaa' }; }));
+    var engData = Object.keys(ch.engagementTypes).map(function (t) { return { label: t, value: ch.engagementTypes[t] }; });
+    view.innerHTML = '<div class="page-head"><h1>Dashboard</h1><span class="sp"></span><span class="muted">Figures reflect the companies you are authorised to view</span></div>' +
+      '<div class="sect-title">Companies</div><div class="grid g6">' +
+      App.statCard(c.total, 'Total companies', '', { page: 'companies' }) + App.statCard(c.active, 'Active companies', 'ok', { page: 'companies', params: { companyStatus: 'Active' } }) +
+      App.statCard(c.pendingReview, 'Pending review', c.pendingReview ? 'warn' : '', { page: 'companies', params: { pendingOnly: true } }) +
+      App.statCard(c.high, 'High risk', c.high ? 'bad' : '', { page: 'companies', params: { risk: 'High' } }) + App.statCard(c.medium, 'Medium risk', '', { page: 'companies', params: { risk: 'Medium' } }) + App.statCard(c.low, 'Low risk', 'ok', { page: 'companies', params: { risk: 'Low' } }) + '</div>' +
+      '<div class="sect-title">Documents</div><div class="grid g6">' +
+      App.statCard(doc.total, 'Total documents (incl. history)', '', { page: 'documents' }) + App.statCard(doc.pendingReview, 'Pending review', doc.pendingReview ? 'warn' : '', { page: 'documents', params: { status: 'Uploaded' } }) +
+      App.statCard(doc.expired, 'Expired', doc.expired ? 'bad' : '', { page: 'documents', params: { status: 'Expired' } }) + App.statCard(doc.expiringSoon, 'Expiring soon', doc.expiringSoon ? 'warn' : '', { page: 'documents', params: { withinDays: ch.windows[ch.windows.length - 1] } }) +
+      App.statCard(doc.missing, 'Missing mandatory docs (' + doc.companiesWithMissing + ' companies)', doc.missing ? 'bad' : '') + '</div>' +
+      '<div class="sect-title">KYC</div><div class="grid g6">' +
+      App.statCard(k.due, 'Reviews due', k.due ? 'warn' : '', { page: 'reviews', params: { dueOnly: true } }) + App.statCard(k.overdue, 'Reviews overdue', k.overdue ? 'bad' : '') + App.statCard(k.completed, 'Reviews completed (approved)', 'ok', { page: 'reviews', params: { status: 'Approved' } }) +
+      App.statCard(k.awaitingMlro, 'Awaiting MLRO approval', k.awaitingMlro ? 'warn' : '', { page: 'reviews', params: { pendingOnly: true } }) + '</div>' +
+      '<div class="grid g2" style="margin-top:20px"><div class="card"><h2>Risk distribution</h2>' + App.donut(riskData) + '</div><div class="card"><h2>KYC status</h2>' + App.donut(kycData) + '</div>' +
+      '<div class="card"><h2>Document expiry</h2>' + App.bars(expData) + '</div><div class="card"><h2>Engagements by type</h2>' + App.bars(engData) + '</div></div>';
+  });
+};
+</script>

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AML/KYC Compliance</title>
+<?!= include_('Styles') ?>
+</head>
+<body>
+<div id="app">
+  <nav id="side" aria-label="Main navigation"></nav>
+  <div id="main">
+    <div id="top">
+      <button class="menu-btn" data-act="menu" aria-label="Menu">&#9776;</button>
+      <div class="search">
+        <input id="gsearch" type="search" placeholder="Search company, QFC, CR, UBO, QID, passport, engagement, auditor, risk..." autocomplete="off" aria-label="Global search">
+        <div id="results"></div>
+      </div>
+      <span class="muted" id="whoami"></span>
+    </div>
+    <div id="view"><div class="empty"><span class="spinner"></span> Loading...</div></div>
+  </div>
+</div>
+<div id="modal-root"></div>
+<div id="toast-root" aria-live="polite"></div>
+<?!= include_('JavaScript') ?>
+<?!= include_('Dashboard') ?>
+<?!= include_('Companies') ?>
+<?!= include_('CompanyProfile') ?>
+<?!= include_('Documents') ?>
+<?!= include_('KYCReview') ?>
+<?!= include_('Reports') ?>
+<?!= include_('Users') ?>
+<?!= include_('Settings') ?>
+<script>App.start();</script>
+</body>
+</html>

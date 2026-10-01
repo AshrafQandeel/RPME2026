@@ -1,0 +1,142 @@
+<script>
+(function () {
+  var E = App.esc, P = { id: null, tab: 'overview', data: null };
+  var TABS = [['overview', 'Overview'], ['engagements', 'Engagements'], ['ubos', 'UBOs'], ['ownership', 'Ownership'], ['documents', 'Documents'], ['kyc', 'KYC Review'], ['risk', 'Risk Assessment'], ['audit', 'Audit History']];
+  var KINDS = { Engagement: { api: 'engagement', id: 'EngagementID' }, UBO: { api: 'ubo', id: 'UBOID' }, Shareholder: { api: 'shareholder', id: 'ShareholderID' } };
+
+  function load() { return App.api('companyGet', { id: P.id }).then(function (d) { P.data = d; return d; }); }
+
+  function header() {
+    var c = P.data.company, rating = c.RiskRating !== 'Not Rated' ? App.badge(c.RiskRating) : (P.data.proposedRating ? '<span class="badge b-info">Proposed: ' + E(P.data.proposedRating) + '</span>' : App.badge('Not Rated'));
+    return (c.IsDeleted ? '<div class="alert bad">This company is deleted (soft delete). ' + (c._perm.restore ? '<button class="sm" data-act="co-restore">Restore</button>' : '') + '</div>' : '') +
+      '<div class="card hdr-card"><div><div class="t">' + E(c.LegalName) + '</div><div class="muted mono">' + E(c.CompanyID) + '</div></div>' +
+      '<div><div class="muted" style="font-size:11px">QFC NUMBER</div>' + (E(c.QFCNumber) || '-') + '</div><div><div class="muted" style="font-size:11px">CR NUMBER</div>' + (E(c.CRNumber) || '-') + '</div>' +
+      '<div><div class="muted" style="font-size:11px">RISK RATING</div>' + rating + '</div><div><div class="muted" style="font-size:11px">KYC STATUS</div>' + App.badge(c.KycStatus) + '</div>' +
+      '<div><div class="muted" style="font-size:11px">NEXT REVIEW</div>' + (E(c.NextKycReviewDate) || '-') + '</div><span class="sp" style="flex:1"></span>' +
+      '<a data-act="go" data-page="companies">&lsaquo; All companies</a></div>' + (c._perm.lockReason ? '<div class="alert info">' + E(c._perm.lockReason) + '</div>' : '');
+  }
+  function tabs() {
+    return '<div class="tabs">' + TABS.filter(function (t) { return (t[0] !== 'documents' || App.can('DOC_VIEW')) && (t[0] !== 'audit' || App.can('AUDIT_VIEW') || App.can('AUDIT_VIEW_COMPANY')); }).map(function (t) {
+      return '<a data-act="ctab" data-tab="' + t[0] + '" class="' + (t[0] === P.tab ? 'active' : '') + '">' + E(t[1]) + '</a>';
+    }).join('') + '</div>';
+  }
+
+  App.pages.company = function (view, params) {
+    P.id = params.id; P.tab = params.tab || 'overview';
+    return load().then(function () { view.innerHTML = '<div id="chead"></div><div id="ctabs"></div><div id="ctab"></div>'; paint(); });
+  };
+  function paint() { App.$('chead').innerHTML = header(); App.$('ctabs').innerHTML = tabs(); renderTab(); }
+  function refresh() { return load().then(paint); }
+  function renderTab() {
+    var box = App.$('ctab'); box.innerHTML = '<span class="spinner"></span>';
+    var fn = { overview: overview, engagements: engagements, ubos: ubos, ownership: ownership, documents: function (b) { return App.docs.companyTab(b, P, refresh); }, kyc: function (b) { return App.kyc.companyTab(b, P, refresh); }, risk: function (b) { return App.kyc.riskTab(b, P, refresh); }, audit: audit }[P.tab];
+    Promise.resolve(fn(box)).catch(function (e) { box.innerHTML = '<div class="alert bad">' + E(e.message || e) + '</div>'; });
+  }
+  App.acts.ctab = function (el) { P.tab = el.dataset.tab; App.$('ctabs').innerHTML = tabs(); renderTab(); };
+
+  // ---- overview
+  function overview(box) {
+    var c = P.data.company, fields = App.fields('Company');
+    var pairs = fields.map(function (f) { return [f.label, c[f.k]]; });
+    var h = '<div class="card"><div class="row"><h2 style="margin:0">Company details</h2><span style="flex:1"></span>' +
+      (c._perm.edit ? '<button class="primary" data-act="co-edit">Edit</button>' : '') + (c._perm.del ? '<button class="danger" data-act="co-del">Delete</button>' : '') + '</div><br>' + App.kv(pairs) + '</div>';
+    h += '<div class="card"><h2>KYC summary</h2>' + App.kv([['Final risk rating', App.badge(c.RiskRating), 1], ['Proposed rating (assessment)', P.data.proposedRating || '-'], ['KYC status', App.badge(c.KycStatus), 1], ['Last KYC review', c.LastKycReviewDate], ['Next KYC review', c.NextKycReviewDate], ['Created', App.fmtTs(c.CreatedAt) + ' by ' + c.CreatedBy]]) + '</div>';
+    h += App.alertBox('warn', P.data.ownership.warnings.concat(P.data.uboWarnings), 'Ownership / UBO attention points');
+    box.innerHTML = h + '<div id="reqbox"></div>';
+    if (App.can('DOC_VIEW')) return App.api('docList', { companyId: P.id }).then(function (d) {
+      var miss = d.requirements.filter(function (r) { return !r.met; }), tot = d.requirements.length;
+      App.$('reqbox').innerHTML = '<div class="card"><h2>Mandatory documents</h2><div class="progress"><i style="width:' + (tot ? (tot - miss.length) / tot * 100 : 100) + '%"></i></div><p class="muted">' + (tot - miss.length) + ' of ' + tot + ' requirements met</p>' +
+        (miss.length ? '<ul>' + miss.map(function (m) { return '<li>' + E(m.label) + '</li>'; }).join('') + '</ul>' : '<span class="badge b-ok">All mandatory documents present</span>') + '</div>';
+    });
+  }
+  App.acts['co-edit'] = function () {
+    var fields = App.fields('Company').slice();
+    if (App.can('COMPANY_RESTORE')) fields.push({ k: 'AuthorizedUsers', label: 'Authorised users (emails, comma separated; applies when access restriction is enabled)', type: 'textarea' });
+    App.formModal({ title: 'Edit company', fields: fields, values: P.data.company, editing: true, onSubmit: function (v) {
+      v.id = P.id; return App.api('companyUpdate', v).then(function () { App.toast('Company updated.', 'ok'); return refresh(); });
+    } });
+  };
+  App.acts['co-del'] = function () {
+    App.prompt('Delete company', 'Reason for deleting ' + P.data.company.LegalName + ' (soft delete - can be restored):', { ok: 'Delete', cls: 'danger' }).then(function (r) {
+      if (r) App.api('companyDelete', { id: P.id, reason: r }).then(function () { App.toast('Company deleted.', 'ok'); App.go('companies'); }, App.fail);
+    });
+  };
+  App.acts['co-restore'] = function () { App.api('companyRestore', { id: P.id }).then(function () { App.toast('Company restored.', 'ok'); return refresh(); }, App.fail); };
+
+  // ---- generic child records
+  function showWarnings(w) { if (w && w.length) App.modal({ title: 'Attention', size: 'sm', html: App.alertBox('warn', w) }); }
+  function childModal(kind, rec) {
+    var fields = App.fields(kind), refs = {}, k = KINDS[kind];
+    if (kind === 'Shareholder') {
+      refs.HeldThroughID = P.data.shareholders.filter(function (s) { return s.EntityType === 'Entity' && (!rec || s.ShareholderID !== rec.ShareholderID); }).map(function (s) { return { id: s.ShareholderID, label: s.ShareholderName + ' (' + s.HoldingPercentage + '%)' }; });
+      refs.UBOID = P.data.ubos.map(function (u) { return { id: u.UBOID, label: u.FullName }; });
+    }
+    App.formModal({ title: (rec ? 'Edit ' : 'Add ') + (kind === 'UBO' ? 'UBO' : kind.toLowerCase()), fields: fields, values: rec, refs: refs, editing: !!rec,
+      onSubmit: function (v) {
+        v.CompanyID = P.id; if (rec) v.id = rec[k.id];
+        return App.api(k.api + 'Save', v).then(function (r) { App.toast('Saved.', 'ok'); return refresh().then(function () { showWarnings(r.warnings); }); });
+      } });
+  }
+  function childDel(kind, id) {
+    App.prompt('Delete ' + kind, 'Reason for deletion (recorded in the audit log):', { ok: 'Delete', cls: 'danger' }).then(function (r) {
+      if (r) App.api(KINDS[kind].api + 'Delete', { id: id, reason: r }).then(function (x) { App.toast('Deleted.', 'ok'); return refresh().then(function () { showWarnings(x.warnings); }); }, App.fail);
+    });
+  }
+  function find(list, key, id) { return list.filter(function (x) { return x[key] === id; })[0]; }
+  function rowActions(kind, r) {
+    var k = KINDS[kind], id = r[k.id];
+    return (r._perm.edit ? '<button class="sm" data-act="ch-edit" data-kind="' + kind + '" data-id="' + E(id) + '">Edit</button> ' : '') + (r._perm.del ? '<button class="sm danger" data-act="ch-del" data-kind="' + kind + '" data-id="' + E(id) + '">Delete</button>' : '');
+  }
+  App.acts['ch-add'] = function (el) { childModal(el.dataset.kind); };
+  App.acts['ch-edit'] = function (el) {
+    var k = el.dataset.kind, list = { Engagement: P.data.engagements, UBO: P.data.ubos, Shareholder: P.data.shareholders }[k];
+    childModal(k, find(list, KINDS[k].id, el.dataset.id));
+  };
+  App.acts['ch-del'] = function (el) { childDel(el.dataset.kind, el.dataset.id); };
+  function addBtn(kind, label, ok) { return ok ? '<button class="primary" data-act="ch-add" data-kind="' + kind + '">+ ' + E(label) + '</button>' : ''; }
+
+  function engagements(box) {
+    box.innerHTML = '<div class="card"><div class="row"><h2 style="margin:0">Engagements</h2><span style="flex:1"></span>' + addBtn('Engagement', 'Add engagement', P.data.can.addEngagement) + '</div><br>' +
+      App.tbl([{ h: 'ID', f: function (r) { return '<span class="mono">' + E(r.EngagementID) + '</span>'; } }, { h: 'Type', f: function (r) { return E(r.EngagementType); } }, { h: 'Start', f: function (r) { return E(r.StartDate); } }, { h: 'End', f: function (r) { return E(r.EndDate); } },
+        { h: 'Partner / Manager', f: function (r) { return E(r.PartnerManager); } }, { h: 'Assigned auditor', f: function (r) { return E(r.AssignedAuditor); } }, { h: 'Status', f: function (r) { return App.badge(r.EngagementStatus); } },
+        { h: 'Risk', f: function (r) { return App.badge(r.RiskLevel); } }, { h: 'Last KYC', f: function (r) { return E(r.LastKycReviewDate); } }, { h: 'Next KYC', f: function (r) { return E(r.NextKycReviewDate); } },
+        { h: '', cls: 'act', f: function (r) { return rowActions('Engagement', r); } }], P.data.engagements, { empty: 'No engagements yet.' }) + '</div>';
+  }
+  function ubos(box) {
+    var direct = P.data.ubos.filter(function (u) { return u.DirectIndirect === 'Direct' || u.DirectIndirect === 'Both'; }).reduce(function (s, u) { return s + (Number(u.OwnershipPercentage) || 0); }, 0);
+    box.innerHTML = '<div class="card"><div class="row"><h2 style="margin:0">Ultimate Beneficial Owners</h2><span style="flex:1"></span>' + addBtn('UBO', 'Add UBO', P.data.can.addUbo) + '</div>' +
+      '<p class="muted">Total direct UBO ownership recorded: <b>' + Math.round(direct * 100) / 100 + '%</b></p>' + App.alertBox('warn', P.data.uboWarnings) +
+      App.tbl([{ h: 'ID', f: function (r) { return '<span class="mono">' + E(r.UBOID) + '</span>'; } }, { h: 'Name', f: function (r) { return '<b>' + E(r.FullName) + '</b><div class="muted">' + E(r.Nationality) + '</div>'; } },
+        { h: 'Own % / Vote %', f: function (r) { return E(r.OwnershipPercentage) + ' / ' + E(r.VotingPercentage || '-') + '<div class="muted">' + E(r.DirectIndirect) + '</div>'; } },
+        { h: 'QID / Passport', f: function (r) { return '<span class="mono">' + E(r.QIDNumber || '-') + '<br>' + E(r.PassportNumber || '-') + '</span>'; } },
+        { h: 'PEP', f: function (r) { return App.badge(r.PEPStatus); } }, { h: 'Sanctions', f: function (r) { return App.badge(r.SanctionsStatus); } }, { h: 'Adverse media', f: function (r) { return App.badge(r.AdverseMediaStatus); } },
+        { h: 'Risk', f: function (r) { return App.badge(r.RiskRating); } }, { h: 'Verification', f: function (r) { return App.badge(r.VerificationStatus) + '<div class="muted">' + E(r.VerificationDate) + '</div>'; } },
+        { h: '', cls: 'act', f: function (r) { return rowActions('UBO', r); } }], P.data.ubos, { empty: 'No UBOs recorded yet.' }) + '</div>';
+  }
+  function ownership(box) {
+    var o = P.data.ownership, names = {};
+    P.data.shareholders.forEach(function (s) { names[s.ShareholderID] = s.ShareholderName; });
+    box.innerHTML = '<div class="card"><div class="row"><h2 style="margin:0">Shareholders</h2><span style="flex:1"></span>' +
+      (App.can('DOC_UPLOAD') ? '<button data-act="upload-chart">Upload ownership chart</button>' : '') + addBtn('Shareholder', 'Add shareholder', P.data.can.addShareholder) + '</div>' +
+      '<p class="muted">Total direct ownership: <b>' + o.directTotal + '%</b>. Enter direct holders first, then add the holders of each intermediate entity using "Holds shares in".</p>' + App.alertBox('warn', o.warnings) +
+      App.tbl([{ h: 'Name', f: function (r) { return '<b>' + E(r.ShareholderName) + '</b>' + (r.IsNominee === 'Y' ? ' <span class="badge b-warn">Nominee</span>' : '') + (r.IsUltimateParent === 'Y' ? ' <span class="badge b-info">Ultimate parent</span>' : ''); } }, { h: 'Type', f: function (r) { return E(r.EntityType); } },
+        { h: 'Country', f: function (r) { return E(r.Country); } }, { h: '%', f: function (r) { return E(r.HoldingPercentage); } }, { h: 'Holds shares in', f: function (r) { return r.HeldThroughID ? E(names[r.HeldThroughID] || r.HeldThroughID) : '<span class="muted">Company (direct)</span>'; } },
+        { h: 'UBO', f: function (r) { return r.UBOID ? '<span class="badge b-ok">' + E(r.UBOID) + '</span>' : ''; } }, { h: '', cls: 'act', f: function (r) { return rowActions('Shareholder', r); } }], P.data.shareholders, { empty: 'No shareholders recorded yet.' }) + '</div>' +
+      '<div class="card"><h2>Ownership chains</h2><p class="muted">Company &larr; Shareholder &larr; Intermediate company &larr; Ultimate parent &larr; UBO. Effective % = product of holdings along the chain. UBO threshold used for warnings: ' + o.threshold + '%.</p>' +
+      (o.chains.length ? o.chains.map(function (ch) {
+        return '<div class="chain"><b>' + E(P.data.company.LegalName) + '</b>' + ch.path.map(function (s) { return '<span class="arrow">&larr;</span>' + E(s.name) + ' <span class="muted">(' + s.pct + '%' + (s.type === 'Individual' ? ', individual' : '') + ')</span>'; }).join('') +
+          ' &nbsp; <span class="badge b-info">effective ' + ch.effective + '%</span> <span class="badge">' + E(ch.terminal) + '</span></div>';
+      }).join('') : '<div class="empty">No chains to display.</div>') +
+      (o.individuals.length ? '<h3 style="margin-top:14px">Individuals (aggregated effective ownership)</h3>' + App.tbl([{ h: 'Individual', f: function (r) { return E(r.name); } }, { h: 'Effective %', f: function (r) { return E(r.effective); } }, { h: 'Recorded as UBO', f: function (r) { return r.uboRecorded ? App.badge('Yes') : App.badge('NO'); } }], o.individuals) : '') + '</div>';
+  }
+  App.acts['upload-chart'] = function () { App.docs.upload(P.id, { docType: 'Ownership Chart' }, function () { App.toast('Ownership chart uploaded.', 'ok'); }); };
+
+  function audit(box) {
+    return App.api('auditList', { companyId: P.id, limit: 200 }).then(function (d) {
+      box.innerHTML = '<div class="card"><h2>Audit history</h2>' + App.tbl([{ h: 'When', f: function (r) { return E(App.fmtTs(r.Timestamp)); } }, { h: 'User', f: function (r) { return E(r.UserEmail) + '<div class="muted">' + E(r.UserRole) + '</div>'; } }, { h: 'Action', f: function (r) { return '<b>' + E(r.Action) + '</b>'; } },
+        { h: 'Record', f: function (r) { return '<span class="mono">' + E(r.RecordType + ' ' + r.RecordID) + '</span>'; } }, { h: 'Change', f: function (r) { return (r.OldValue ? '<div class="muted">Old: ' + E(r.OldValue.substr(0, 200)) + '</div>' : '') + (r.NewValue ? '<div>New: ' + E(r.NewValue.substr(0, 200)) + '</div>' : ''); } }, { h: 'Comments', f: function (r) { return E(r.Comments); } }], d.rows) + '</div>';
+    });
+  }
+  App.companyProfile = { refresh: refresh };
+})();
+</script>

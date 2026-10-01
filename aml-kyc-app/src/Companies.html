@@ -1,0 +1,63 @@
+<script>
+(function () {
+  var E = App.esc, F = {}, ST = { page: 1 };
+  var FIELDS = ['q', 'risk', 'companyStatus', 'reviewStatus', 'engagementType', 'auditor', 'docStatus', 'dateFrom', 'dateTo', 'expiryFrom', 'expiryTo'];
+
+  function sel(id, label, opts, val) {
+    return '<label>' + E(label) + '<select id="cf_' + id + '"><option value=""></option>' + opts.map(function (o) { var v = o.v !== undefined ? o.v : o; var l = o.l !== undefined ? o.l : o; return '<option value="' + E(v) + '"' + (v === val ? ' selected' : '') + '>' + E(l) + '</option>'; }).join('') + '</select></label>';
+  }
+  function inp(id, label, type, val, w) { return '<label>' + E(label) + '<input id="cf_' + id + '" type="' + type + '" value="' + E(val || '') + '" style="width:' + (w || 140) + 'px" data-enter="cfApply"></label>'; }
+
+  function read() {
+    var o = {};
+    FIELDS.forEach(function (k) { var el = App.$('cf_' + k); if (el && el.value) o[k] = el.value; });
+    var d = App.$('cf_includeDeleted'); if (d && d.checked) o.includeDeleted = true;
+    if (F.pendingOnly) o.pendingOnly = true;
+    return o;
+  }
+
+  function load() {
+    var q = Object.assign({}, F, { page: ST.page, sort: ST.sort, dir: ST.dir, pageSize: 25 });
+    return App.api('companyList', q).then(function (d) {
+      var risk = ST.view === 'risk';
+      var cols = [
+        { h: 'Company', f: function (r) { return '<a data-act="open-company" data-id="' + E(r.CompanyID) + '"><b>' + E(r.LegalName) + '</b></a><div class="muted mono">' + E(r.CompanyID) + (r.IsDeleted ? ' &middot; <span class="badge b-bad">Deleted</span>' : '') + '</div>'; } },
+        { h: 'QFC No.', f: function (r) { return E(r.QFCNumber); } }, { h: 'CR No.', f: function (r) { return E(r.CRNumber); } },
+        { h: 'Engagements', f: function (r) { return E(r.Engagements); } },
+        { h: 'Risk', f: function (r) { return App.badge(r.RiskRating); } }, { h: 'KYC status', f: function (r) { return App.badge(r.KycStatus); } },
+        { h: 'Next review', f: function (r) { return E(r.NextKycReviewDate) + (r.Overdue ? ' <span class="badge b-bad">Overdue</span>' : ''); } },
+        { h: 'Documents', f: function (r) { return (r.Missing ? '<span class="badge b-bad">' + r.Missing + ' missing</span> ' : '') + (r.Expired ? '<span class="badge b-bad">' + r.Expired + ' expired</span>' : '') || '<span class="badge b-ok">OK</span>'; } }
+      ];
+      if (risk) cols.push({ h: 'Risk tab', cls: 'act', f: function (r) { return '<button class="sm" data-act="open-company" data-id="' + E(r.CompanyID) + '" data-tab="risk">Assess</button>'; } });
+      var pages = Math.max(1, Math.ceil(d.total / d.pageSize));
+      App.$('clist').innerHTML = App.tbl(cols, d.rows, { row: function (r) { return 'class="click"'; }, empty: 'No companies match the filters.' }) +
+        '<div class="pager"><span class="muted">' + d.total + ' companies</span><button class="sm" data-act="cpage" data-d="-1"' + (d.page <= 1 ? ' disabled' : '') + '>&lsaquo; Prev</button><span>Page ' + d.page + ' / ' + pages + '</span><button class="sm" data-act="cpage" data-d="1"' + (d.page >= pages ? ' disabled' : '') + '>Next &rsaquo;</button></div>';
+    }, function (e) { App.$('clist').innerHTML = '<div class="alert bad">' + E(e.message) + '</div>'; });
+  }
+
+  App.pages.companies = function (view, params) {
+    F = {}; ST = { page: 1, view: params.view };
+    FIELDS.concat(['pendingOnly']).forEach(function (k) { if (params[k]) F[k] = params[k]; });
+    var L = App.S.boot.lists, title = params.pendingOnly ? 'Pending Reviews' : params.view === 'risk' ? 'Risk Assessment' : 'All Companies';
+    view.innerHTML = '<div class="page-head"><h1>' + E(title) + '</h1><span class="sp"></span>' + (App.can('COMPANY_CREATE') ? '<button class="primary" data-act="company-add">+ Add Company</button>' : '') + '</div>' +
+      '<div class="card"><div class="filters">' + inp('q', 'Search name / QFC / CR', 'search', F.q, 220) + sel('risk', 'Risk', L.riskLevels.concat(['Not Rated']), F.risk) + sel('companyStatus', 'Company status', L.companyStatuses, F.companyStatus) +
+      sel('reviewStatus', 'Review status', L.kycStatuses.concat(['Not Started']), F.reviewStatus) + sel('engagementType', 'Engagement', L.engagementTypes, F.engagementType) +
+      sel('auditor', 'Auditor', L.users.map(function (u) { return { v: u.email, l: u.name }; }), F.auditor) + sel('docStatus', 'Document status', L.docStatuses, F.docStatus) +
+      inp('dateFrom', 'Created from', 'date', F.dateFrom) + inp('dateTo', 'Created to', 'date', F.dateTo) + inp('expiryFrom', 'Doc expiry from', 'date', F.expiryFrom) + inp('expiryTo', 'Doc expiry to', 'date', F.expiryTo) +
+      (App.can('COMPANY_RESTORE') ? '<label><span>&nbsp;</span><span><input type="checkbox" id="cf_includeDeleted"> Show deleted</span></label>' : '') +
+      '<button class="primary" data-act="cfApply">Apply</button><button data-act="cfReset">Reset</button></div><div id="clist"><span class="spinner"></span></div></div>';
+    return load();
+  };
+  App.acts.cfApply = App.changes.cfApply = function () { var keep = F.pendingOnly; F = read(); if (keep) F.pendingOnly = true; ST.page = 1; load(); };
+  App.acts.cfReset = function () { F = {}; App.go('companies', {}); };
+  App.acts.cpage = function (el) { ST.page += Number(el.dataset.d); load(); };
+
+  App.pages.companyAdd = function () {
+    App.formModal({ title: 'Add Company', fields: App.fields('Company'), submit: 'Create company',
+      intro: '<div class="alert info">A Google Drive folder with the standard sub-folders is created automatically. Provide at least a QFC or CR number.</div>',
+      onSubmit: function (vals) {
+        return App.api('companyCreate', vals).then(function (r) { App.toast('Company ' + r.company.CompanyID + ' created.', 'ok'); App.go('company', { id: r.company.CompanyID }); });
+      } });
+  };
+})();
+</script>

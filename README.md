@@ -18,3 +18,9 @@ View your app in AI Studio: https://ai.studio/apps/1a767e4d-a42f-4a41-a9cb-1c052
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+---
+
+## AML/KYC Compliance Management (Google Apps Script)
+
+A separate, self-contained Google Apps Script web application (Google Sheets database + Google Drive repository) for QFC AML/KYC record-keeping lives in [`aml-kyc-app/`](aml-kyc-app/README.md). It is independent of the app above.

@@ -1,0 +1,37 @@
+<script>
+(function () {
+  var E = App.esc, SET = [];
+  var GROUPS = [['AML methodology (MLRO / DMLRO)', ['REQUIRED_DOCS', 'REVIEW_FREQUENCY_MONTHS', 'KYC_DUE_WINDOW_DAYS', 'EXPIRY_WARNING_DAYS', 'APPROVAL_REQUIREMENTS', 'RISK_CONFIG', 'CHECKLIST_ITEMS', 'HIGH_RISK_JURISDICTIONS', 'ENGAGEMENT_TYPES', 'LEGAL_FORMS', 'DOC_TYPES']],
+    ['System (System Administrator / MLRO)', ['ACCESS', 'FILE_RULES', 'NOTIFICATIONS', 'BACKUP_RETENTION_DAYS', 'ROLE_PERMISSIONS']]];
+
+  App.pages.settings = function (view) {
+    return App.api('settingsGet').then(function (d) {
+      SET = d.settings;
+      view.innerHTML = '<div class="page-head"><h1>System Settings</h1></div>' +
+        '<div class="alert info">Regulatory rules, thresholds, review frequencies and required documents are configuration, not code. They are illustrative defaults: the MLRO is responsible for aligning them with current QFC AML/CFT requirements and the firm\'s AML policy. Every change is audited.</div>' +
+        (App.can('BACKUP') ? '<div class="card"><h2>Backup</h2><p class="muted">Creates a timestamped copy of the database spreadsheet in AML_KYC_SYSTEM/System Documents/Backups. Backups are never deleted automatically.</p><button class="primary" data-act="st-backup">Backup database now</button></div>' : '') +
+        GROUPS.map(function (g) {
+          var items = SET.filter(function (s) { return g[1].indexOf(s.key) >= 0; });
+          if (!items.length) return '';
+          return '<div class="sect-title">' + E(g[0]) + '</div>' + items.map(function (s) {
+            return '<div class="card"><div class="row"><h3 style="margin:0" class="mono">' + E(s.key) + '</h3><span style="flex:1"></span>' + (s.editable ? '<button class="sm" data-act="st-reset" data-key="' + E(s.key) + '">Reset to default</button><button class="sm primary" data-act="st-save" data-key="' + E(s.key) + '">Save</button>' : '<span class="badge">Read-only</span>') + '</div>' +
+              '<p class="muted">' + E(s.description) + '</p><textarea id="st_' + E(s.key) + '" class="mono" spellcheck="false" style="min-height:' + (JSON.stringify(s.value).length > 400 ? 240 : 90) + 'px"' + (s.editable ? '' : ' readonly') + '>' + E(JSON.stringify(s.value, null, 2)) + '</textarea></div>';
+          }).join('');
+        }).join('');
+    });
+  };
+  App.acts['st-save'] = function (el) {
+    var key = el.dataset.key, v;
+    try { v = JSON.parse(App.$('st_' + key).value); } catch (e) { return App.fail({ message: 'Not valid JSON: ' + e.message }); }
+    App.confirm('Save setting', 'Change ' + key + '? This is recorded in the audit log and applies immediately.', 'Save').then(function (ok) {
+      if (ok) App.busy(el, App.api('settingsSave', { key: key, value: v })).then(function () { App.toast(key + ' saved.', 'ok'); }, App.fail);
+    });
+  };
+  App.acts['st-reset'] = function (el) {
+    App.confirm('Reset to default', 'Reset ' + el.dataset.key + ' to the built-in default?', 'Reset', 'danger').then(function (ok) {
+      if (ok) App.api('settingsSave', { key: el.dataset.key, reset: true }).then(function () { App.toast('Reset.', 'ok'); App.reload(); }, App.fail);
+    });
+  };
+  App.acts['st-backup'] = function (el) { App.busy(el, App.api('adminBackup')).then(function (r) { App.toast('Backup created: ' + r.name, 'ok'); }, App.fail); };
+})();
+</script>
