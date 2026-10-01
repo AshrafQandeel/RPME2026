@@ -15,7 +15,7 @@ const pdfB64 = Buffer.from('%PDF-1.4 test content').toString('base64');
 const doc = (over) => Object.assign({ fileName: 'x.pdf', base64: pdfB64 }, over);
 
 section('Public surface (google.script.run exposure)');
-const allowed = ['doGet', 'api', 'setupAMLSystem', 'installTriggers', 'dailyMaintenance', 'seedTestData', 'removeTestData', 'AppError'];
+const allowed = ['doGet', 'api', 'grantSystemAdministratorFullAccess', 'setupAMLSystem', 'installTriggers', 'dailyMaintenance', 'seedTestData', 'removeTestData', 'AppError'];
 const src = env.files.map(f => fs.readFileSync(path.join(SRC, f), 'utf8')).join('\n');
 const pub = [...src.matchAll(/^function\s+([A-Za-z0-9_$]+)/gm)].map(m => m[1]).filter(n => !n.endsWith('_'));
 ok(pub.every(n => allowed.includes(n)), 'unexpected public functions: ' + pub.filter(n => !allowed.includes(n)).join(','));
@@ -226,6 +226,14 @@ as('owner@firm.test'); const acc0 = ctx.getSetting_('ACCESS'); good('settingsSav
 as('aud2@firm.test'); bad('companyGet', { id: C1 }, /not found/, 'unassigned auditor cannot open company'); eq(good('companyList', {}).total, 0, 'unassigned list empty');
 as('aud1@firm.test'); good('companyGet', { id: C1 }, 'creator/assigned auditor can');
 as('mlro@firm.test'); good('companyUpdate', { id: C1, AuthorizedUsers: 'aud2@firm.test' }); as('aud2@firm.test'); good('companyGet', { id: C1 }, 'authorised user can');
+
+section('Grant admin full access');
+as('owner@firm.test'); ctx.resetMemo_(); ctx.grantSystemAdministratorFullAccess();
+const ma = ctx.dbGet_('Companies', C1) ? C1 : C1;
+as('owner@firm.test'); good('userSave', { Name: 'New Admin Created', Email: 'new@firm.test', Role: 'MLRO', Status: 'Active' }, 'admin creates users');
+good('settingsSave', { key: 'RISK_CONFIG', reset: true }, 'admin now edits AML methodology');
+good('companyCreate', { LegalName: 'Admin Made Co', QFCNumber: 'ADM-1', CountryOfIncorporation: 'Qatar', CompanyStatus: 'Active' }, 'admin creates company');
+as('someone@firm.test'); threw = false; try { ctx.grantSystemAdministratorFullAccess(); } catch (e) { threw = true; } ok(threw, 'non-owner cannot grant');
 
 section('Test data helpers');
 as('owner@firm.test'); ctx.resetMemo_(); const seeded = ctx.seedTestData(); ok(/Seeded/.test(seeded), 'seed test data: ' + seeded);

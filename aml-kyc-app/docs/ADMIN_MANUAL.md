@@ -5,6 +5,9 @@
 - **MLRO** - full access, owner of AML methodology (required documents, risk model, review frequencies).
 - **DMLRO** - same operational permissions as MLRO except role management, backups and system-level settings (defaults; adjustable in `ROLE_PERMISSIONS`).
 
+## Giving the System Administrator full (MLRO-equivalent) access
+By default the System Administrator is technical-only. If your firm wants the administrator to also approve KYC, verify documents and set final risk ratings, the script owner runs **`grantSystemAdministratorFullAccess()`** once from the Apps Script editor. It copies the MLRO permissions to the System Administrator role and sets `ACCESS.sysadminCanApprove = true`; both changes are audited. Maker-checker still applies (nobody can approve their own submission). To undo it, edit `ROLE_PERMISSIONS` and `ACCESS` in System Settings.
+
 ## Users (User Management)
 - Add a user: name, Google email, role, department. Access is immediate; sign-in requires the Google account to exist in the domain.
 - Deactivate instead of delete (keeps history). You cannot change your own role/status; at least one active user must keep role-management rights.
@@ -44,7 +47,7 @@ Changing a rule does not rewrite history: existing reviews keep their recorded d
 - Errors: `Error_Log` sheet (reference ID shown to the user).
 
 ## Editor-only functions (run by the script owner)
-`setupAMLSystem()`, `installTriggers()`, `dailyMaintenance()`, `seedTestData()`, `removeTestData()`.
+`setupAMLSystem()`, `grantSystemAdministratorFullAccess()`, `installTriggers()`, `dailyMaintenance()`, `seedTestData()`, `removeTestData()`.
 
 ## Data corrections
 Direct edits to the spreadsheet bypass validation and the audit trail - avoid them. If unavoidable: two-person rule, document the reason, and note it in an audit-relevant channel. Cache can take up to 5 minutes to reflect manual edits.

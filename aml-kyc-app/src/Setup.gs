@@ -102,6 +102,30 @@ function dailyMaintenance() {
   return runMaintenance_();
 }
 
+/**
+ * Gives the System Administrator role the same permissions as the MLRO (including KYC approval, document
+ * verification and final risk rating) by editing the live ROLE_PERMISSIONS and ACCESS settings.
+ * This deliberately removes the default separation between technical administration and AML decisions, so it is
+ * an owner-only, audited decision. Run from the editor. Maker-checker still applies (nobody approves their own submission).
+ */
+function grantSystemAdministratorFullAccess() {
+  assertOwner_();
+  resetMemo_();
+  var owner = normEmail_(Session.getEffectiveUser().getEmail());
+  var u = dbAll_('Users').filter(function (x) { return normEmail_(x.Email) === owner && x.Status === 'Active'; })[0];
+  if (!u) fail_('The script owner is not an active user. Run setupAMLSystem() first.');
+  var user = { UserID: u.UserID, Email: owner, Role: u.Role, Status: 'Active', Name: u.Name };
+  if (!hasPermission_(user, 'ROLE_MANAGE')) fail_('The owner account must hold the ROLE_MANAGE permission to run this.');
+  var perms = JSON.parse(JSON.stringify(getRolePermissions_()));
+  perms['System Administrator'] = JSON.parse(JSON.stringify(perms.MLRO));
+  settingSave_(user, { key: 'ROLE_PERMISSIONS', value: perms });
+  var access = JSON.parse(JSON.stringify(getSetting_('ACCESS')));
+  access.sysadminCanApprove = true;
+  settingSave_(user, { key: 'ACCESS', value: access });
+  resetMemo_();
+  return 'System Administrator now has the same permissions as the MLRO.';
+}
+
 // ------------------------------------------------------------------ test data (development only)
 var TEST_NAME = 'TEST COMPANY - DO NOT USE';
 
