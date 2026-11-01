@@ -49,10 +49,10 @@ const Layout: React.FC<LayoutProps> = ({
   }, []);
 
   const navItems = [
-    { label: 'System Dashboard', path: '/', icon: <LayoutDashboard size={20} />, roles: ['admin', 'compliance_manager', 'user'] },
-    { label: 'Client Onboarding', path: '/clients', icon: <Users size={20} />, roles: ['admin', 'compliance_manager', 'user'] },
-    { label: 'Sanctions Registry', path: '/sanctions', icon: <Globe size={20} />, roles: ['admin', 'compliance_manager', 'user'] },
-    { label: 'Regulatory Reports', path: '/reports', icon: <FileText size={20} />, roles: ['admin', 'compliance_manager', 'user'] },
+    { label: 'System Dashboard', path: '/', icon: <LayoutDashboard size={20} />, roles: ['admin', 'compliance_manager', 'dmlro', 'user'] },
+    { label: 'Client Onboarding', path: '/clients', icon: <Users size={20} />, roles: ['admin', 'compliance_manager', 'dmlro', 'user'] },
+    { label: 'Sanctions Registry', path: '/sanctions', icon: <Globe size={20} />, roles: ['admin', 'compliance_manager', 'dmlro', 'user'] },
+    { label: 'Regulatory Reports', path: '/reports', icon: <FileText size={20} />, roles: ['admin', 'compliance_manager', 'dmlro', 'user'] },
     { label: 'Governance', path: '/admin', icon: <Settings size={20} />, roles: [], adminOnly: true },
   ];
 
