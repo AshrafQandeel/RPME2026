@@ -663,6 +663,7 @@ CREATE INDEX IF NOT EXISTS idx_workflow_client ON "public"."kyc_workflow_history
                     >
                        <option value="admin">System Administrator</option>
                        <option value="compliance_manager">Compliance Manager</option>
+                       <option value="dmlro">Deputy MLRO (DMLRO)</option>
                        <option value="user">Standard User</option>
                     </select>
                  </div>

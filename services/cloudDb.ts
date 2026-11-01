@@ -164,7 +164,7 @@ export const fetchCloudClients = async (from: number, to: number, userRole?: str
   
   let query = supabaseClient.from('clients').select('*');
 
-  // Compliance Managers and Admins see everything. Regular users see only their own.
+  // Compliance Managers, DMLROs and Admins see everything. Regular users see only their own.
   if (userRole === 'user' && userId) {
     query = query.eq('created_by', userId);
   }

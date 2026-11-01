@@ -25,6 +25,7 @@ export enum KYCStatus {
 export enum UserRole {
   ADMIN = 'admin',
   COMPLIANCE_MANAGER = 'compliance_manager',
+  DMLRO = 'dmlro',
   USER = 'user'
 }
 

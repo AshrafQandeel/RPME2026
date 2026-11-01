@@ -231,7 +231,7 @@ const ClientManager: React.FC<ClientManagerProps> = ({
   const [formData, setFormData] = useState({ ...INITIAL_FORM_STATE });
 
   const userRole = String(currentUserRole || '').toLowerCase();
-  const isComplianceManager = userRole.includes('admin') || userRole.includes('compliance');
+  const isComplianceManager = userRole.includes('admin') || userRole.includes('compliance') || userRole.includes('dmlro');
   const isReviewerOrAdmin = isComplianceManager;
   const isDataEntry = userRole.includes('user');
   const isPrivileged = isComplianceManager || isDataEntry;
