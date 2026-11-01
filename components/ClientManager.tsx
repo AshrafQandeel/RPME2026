@@ -468,7 +468,7 @@ const ClientManager: React.FC<ClientManagerProps> = ({
         <Search size={18} className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-300" />
         <input
           type="text"
-          placeholder="Search by company, director, UBO, shareholder or signatory name..."
+          placeholder="Search by company, director, UBO, shareholder or signatory name / ID / passport..."
           className="w-full pl-12 pr-4 py-4 bg-white rounded-2xl border border-gray-100 shadow-sm text-sm font-bold outline-none focus:border-emerald-300"
           value={searchInput}
           onChange={e => setSearchInput(e.target.value)}

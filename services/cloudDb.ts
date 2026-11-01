@@ -159,14 +159,14 @@ export const searchSanctionsAuthoritative = async (
   }
 };
 
-// Lower-cased text blob of the company name and every associated person, used for name search.
+// Lower-cased text blob of the company name and every associated person (name + ID/passport), used for name search.
 export const buildClientSearchText = (client: Client): string => {
   const people = [
     ...(client["Directors Names"] || []),
     ...(client["Significant Shareholders"] || []),
     ...(client["UBO Details"] || []),
     ...(client["Authorized Signatory"] || []),
-  ].map(p => p?.name || '');
+  ].flatMap(p => [p?.name || '', p?.qid_passport || '']);
   return [client["Client Name"], ...people].filter(Boolean).join(' ').toLowerCase();
 };
 
