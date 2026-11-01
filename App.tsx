@@ -77,6 +77,7 @@ const App: React.FC = () => {
   });
 
   const currentPageRef = useRef(1);
+  const clientSearchRef = useRef('');
 
   const [screeningProgress, setScreeningProgress] = useState<ScreeningProgress>({
     totalRecords: 0,
@@ -157,8 +158,8 @@ const App: React.FC = () => {
       const from = (page - 1) * CLIENTS_PER_PAGE;
       const to = from + CLIENTS_PER_PAGE - 1;
       const [cloudClients, count, globalRisks] = await Promise.all([
-        fetchCloudClients(from, to, currentUser?.role, currentUser?.id),
-        fetchClientsTotalCount(),
+        fetchCloudClients(from, to, currentUser?.role, currentUser?.id, clientSearchRef.current),
+        fetchClientsTotalCount(clientSearchRef.current),
         fetchGlobalRiskCounts()
       ]);
       if (cloudClients) setClients(cloudClients);
@@ -490,6 +491,7 @@ const App: React.FC = () => {
                 onAddClient={handleAddClientWithAuthoritativeScreening} 
                 onDeleteClient={handleDeleteClient} 
                 onRefresh={() => refreshClients(currentClientsPage)} 
+                onSearch={(term: string) => { clientSearchRef.current = term; refreshClients(1); }} 
                 onReScreen={handleGlobalBatchScreening} 
                 onUpdateClient={handleUpdateClient} 
                 onAdvancedScreening={handleAdvancedScreening} 

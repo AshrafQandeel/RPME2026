@@ -159,10 +159,26 @@ export const searchSanctionsAuthoritative = async (
   }
 };
 
-export const fetchCloudClients = async (from: number, to: number, userRole?: string, userId?: string): Promise<Client[]> => {
+// Lower-cased text blob of the company name and every associated person, used for name search.
+export const buildClientSearchText = (client: Client): string => {
+  const people = [
+    ...(client["Directors Names"] || []),
+    ...(client["Significant Shareholders"] || []),
+    ...(client["UBO Details"] || []),
+    ...(client["Authorized Signatory"] || []),
+  ].map(p => p?.name || '');
+  return [client["Client Name"], ...people].filter(Boolean).join(' ').toLowerCase();
+};
+
+const applyClientSearch = (query: any, search?: string) => {
+  const term = (search || '').trim().toLowerCase().replace(/[%_\\]/g, m => '\\' + m);
+  return term ? query.ilike('search_text', `%${term}%`) : query;
+};
+
+export const fetchCloudClients = async (from: number, to: number, userRole?: string, userId?: string, search?: string): Promise<Client[]> => {
   if (!supabaseClient) initSupabase();
   
-  let query = supabaseClient.from('clients').select('*');
+  let query = applyClientSearch(supabaseClient.from('clients').select('*'), search);
 
   // Compliance Managers, DMLROs and Admins see everything. Regular users see only their own.
   if (userRole === 'user' && userId) {
@@ -218,9 +234,9 @@ export const fetchCloudClients = async (from: number, to: number, userRole?: str
   } as Client));
 };
 
-export const fetchClientsTotalCount = async (): Promise<number> => {
+export const fetchClientsTotalCount = async (search?: string): Promise<number> => {
   if (!supabaseClient) initSupabase();
-  const { count, error } = await supabaseClient.from('clients').select('*', { count: 'exact', head: true });
+  const { count, error } = await applyClientSearch(supabaseClient.from('clients').select('*', { count: 'exact', head: true }), search);
   return error ? 0 : count || 0;
 };
 
@@ -287,6 +303,7 @@ export const upsertCloudClient = async (client: Client) => {
     shareholders: client["Significant Shareholders"],
     ubo_details: client["UBO Details"],
     signatories: client["Authorized Signatory"],
+    search_text: buildClientSearchText(client),
     secretary: client["Secretary"],
     sef: client["Senior Executive Function"],
     auditor: client["Approved Auditor"],

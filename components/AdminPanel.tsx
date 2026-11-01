@@ -158,6 +158,13 @@ ALTER TABLE "public"."clients" ADD COLUMN IF NOT EXISTS "created_by" TEXT;
 ALTER TABLE "public"."clients" ADD COLUMN IF NOT EXISTS "kyc_status" TEXT;
 ALTER TABLE "public"."clients" ADD COLUMN IF NOT EXISTS "risk_level" TEXT;
 ALTER TABLE "public"."clients" ADD COLUMN IF NOT EXISTS "matches" JSONB;
+ALTER TABLE "public"."clients" ADD COLUMN IF NOT EXISTS "search_text" TEXT;
+UPDATE "public"."clients" c SET "search_text" = lower(concat_ws(' ', c."client_name",
+  (SELECT string_agg(p->>'name', ' ') FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c."directors") = 'array' THEN c."directors" ELSE '[]'::jsonb END) p),
+  (SELECT string_agg(p->>'name', ' ') FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c."shareholders") = 'array' THEN c."shareholders" ELSE '[]'::jsonb END) p),
+  (SELECT string_agg(p->>'name', ' ') FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c."ubo_details") = 'array' THEN c."ubo_details" ELSE '[]'::jsonb END) p),
+  (SELECT string_agg(p->>'name', ' ') FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c."signatories") = 'array' THEN c."signatories" ELSE '[]'::jsonb END) p)))
+WHERE c."search_text" IS NULL;
 ALTER TABLE "public"."clients" ADD COLUMN IF NOT EXISTS "match_details" JSONB;
 ALTER TABLE "public"."clients" ADD COLUMN IF NOT EXISTS "last_screened_at" TIMESTAMPTZ;
 ALTER TABLE "public"."clients" ADD COLUMN IF NOT EXISTS "entity_type" TEXT;

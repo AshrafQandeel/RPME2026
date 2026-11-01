@@ -1,9 +1,9 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Client, RiskLevel, KYCStatus, EntityType, UserRole, ScreeningProgress, PersonRecord } from '../types';
 import { 
   Plus, Trash2, Eye, RefreshCw, X, CheckCircle2, Landmark, 
-  FileText, Shield, Loader2, ScanSearch, 
+  FileText, Shield, Loader2, ScanSearch, Search, 
   Activity, Database, CheckCircle,
   ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight, ShieldAlert,
   Info, MapPin, Mail, Globe, FileSignature, 
@@ -189,6 +189,7 @@ interface ClientManagerProps {
   onDeleteClient: (id: string) => Promise<void>;
   onUpdateClient: (client: Client) => Promise<void>;
   onRefresh: () => void;
+  onSearch?: (term: string) => void;
   onReScreen?: () => void;
   onAdvancedScreening?: (client: Client) => Promise<Client>;
   screeningProgress?: ScreeningProgress;
@@ -206,6 +207,7 @@ const ClientManager: React.FC<ClientManagerProps> = ({
   onDeleteClient, 
   onUpdateClient,
   onRefresh, 
+  onSearch,
   onReScreen,
   onAdvancedScreening,
   screeningProgress,
@@ -213,6 +215,12 @@ const ClientManager: React.FC<ClientManagerProps> = ({
   currentUserId 
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [searchInput, setSearchInput] = useState('');
+  useEffect(() => {
+    if (!onSearch) return;
+    const t = setTimeout(() => onSearch(searchInput.trim()), 400);
+    return () => clearTimeout(t);
+  }, [searchInput]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isScanningAdvanced, setIsScanningAdvanced] = useState(false);
   const [advancedScreenError, setAdvancedScreenError] = useState<string | null>(null);
@@ -454,6 +462,17 @@ const ClientManager: React.FC<ClientManagerProps> = ({
             </button>
           )}
         </div>
+      </div>
+
+      <div className="relative">
+        <Search size={18} className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-300" />
+        <input
+          type="text"
+          placeholder="Search by company, director, UBO, shareholder or signatory name..."
+          className="w-full pl-12 pr-4 py-4 bg-white rounded-2xl border border-gray-100 shadow-sm text-sm font-bold outline-none focus:border-emerald-300"
+          value={searchInput}
+          onChange={e => setSearchInput(e.target.value)}
+        />
       </div>
 
       <div className="bg-white rounded-2xl sm:rounded-[3rem] shadow-sm border border-gray-100 overflow-hidden relative z-0 flex flex-col">
